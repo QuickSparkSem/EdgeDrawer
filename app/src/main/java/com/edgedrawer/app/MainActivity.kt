@@ -66,7 +66,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val subtitle = TextView(this).apply {
-            text = "Scorrimento verticale A–Z, filtro colore sotto la Z e finestre rapide"
+            text = "Colori sopra la A, indice A–Z, recenti sotto la Z e finestre rapide"
             textSize = 13.5f
             setTextColor(textSecondary)
             setPadding(0, dp(4), 0, dp(18))
@@ -151,7 +151,7 @@ class MainActivity : AppCompatActivity() {
         mainLayout.addView(btnTest)
         cardMain.addView(mainLayout)
 
-        // --- CARD 2: TEMA ONE UI (GIORNO / NOTTE & COLORE ACCENTO) ---
+        // --- CARD 2: TEMA ONE UI ---
         val cardTheme = createCard(cardBg, dp(16))
         val themeLayout = createCardInner(dp(18))
         themeLayout.addView(createSectionHeader("Aspetto & Tema One UI", accent, dp(10)))
@@ -280,6 +280,7 @@ class MainActivity : AppCompatActivity() {
             unit = "%",
             min = 30,
             max = 90,
+            step = 1,
             initial = prefs.barHeightPercent,
             textColor = textPrimary,
             accentColor = accent,
@@ -294,6 +295,7 @@ class MainActivity : AppCompatActivity() {
             unit = "%",
             min = 0,
             max = 100,
+            step = 1,
             initial = prefs.verticalPositionPercent,
             textColor = textPrimary,
             accentColor = accent,
@@ -308,6 +310,7 @@ class MainActivity : AppCompatActivity() {
             unit = " dp",
             min = 18,
             max = 46,
+            step = 1,
             initial = prefs.triggerWidthDp,
             textColor = textPrimary,
             accentColor = accent,
@@ -322,6 +325,7 @@ class MainActivity : AppCompatActivity() {
             unit = "%",
             min = 0,
             max = 100,
+            step = 1,
             initial = prefs.triggerAlphaPercent,
             textColor = textPrimary,
             accentColor = accent,
@@ -343,6 +347,7 @@ class MainActivity : AppCompatActivity() {
             unit = "",
             min = 0,
             max = 120,
+            step = 1,
             initial = prefs.blurRadius,
             textColor = textPrimary,
             accentColor = accent,
@@ -357,6 +362,7 @@ class MainActivity : AppCompatActivity() {
             unit = "%",
             min = 0,
             max = 100,
+            step = 1,
             initial = prefs.panelBgAlphaPercent,
             textColor = textPrimary,
             accentColor = accent,
@@ -371,6 +377,7 @@ class MainActivity : AppCompatActivity() {
             unit = "%",
             min = 0,
             max = 100,
+            step = 1,
             initial = prefs.indexBarAlphaPercent,
             textColor = textPrimary,
             accentColor = accent,
@@ -385,6 +392,7 @@ class MainActivity : AppCompatActivity() {
             unit = "%",
             min = 0,
             max = 140,
+            step = 1,
             initial = prefs.waveStrengthPercent,
             textColor = textPrimary,
             accentColor = accent,
@@ -398,7 +406,7 @@ class MainActivity : AppCompatActivity() {
         // --- CARD 5: DISTANZE & DIMENSIONI APP ---
         val cardSpacing = createCard(cardBg, dp(16))
         val spacingLayout = createCardInner(dp(18))
-        spacingLayout.addView(createSectionHeader("Dimensioni & Distanze App", accent, dp(10)))
+        spacingLayout.addView(createSectionHeader("Dimensioni, Distanze & App Recenti", accent, dp(10)))
 
         val labelsSwitch = MaterialSwitch(this).apply {
             text = "Mostra etichette nomi app"
@@ -412,10 +420,26 @@ class MainActivity : AppCompatActivity() {
 
         addSlider(
             parent = spacingLayout,
+            titlePrefix = "Numero app recenti (sotto la Z)",
+            unit = " app",
+            min = 10,
+            max = 100,
+            step = 10,
+            initial = prefs.recentCount,
+            textColor = textPrimary,
+            accentColor = accent,
+            dp12 = dp(12),
+            onChanged = { prefs.recentCount = it },
+            onStop = {}
+        )
+
+        addSlider(
+            parent = spacingLayout,
             titlePrefix = "Scala generale pannello e icone",
             unit = "%",
             min = 70,
             max = 130,
+            step = 1,
             initial = prefs.panelScalePercent,
             textColor = textPrimary,
             accentColor = accent,
@@ -430,6 +454,7 @@ class MainActivity : AppCompatActivity() {
             unit = " dp",
             min = 2,
             max = 32,
+            step = 1,
             initial = prefs.appSpacingDp,
             textColor = textPrimary,
             accentColor = accent,
@@ -444,6 +469,7 @@ class MainActivity : AppCompatActivity() {
             unit = " dp",
             min = 0,
             max = 18,
+            step = 1,
             initial = prefs.labelDistanceDp,
             textColor = textPrimary,
             accentColor = accent,
@@ -458,6 +484,7 @@ class MainActivity : AppCompatActivity() {
             unit = " dp",
             min = 4,
             max = 44,
+            step = 1,
             initial = prefs.appsFromIndexDp,
             textColor = textPrimary,
             accentColor = accent,
@@ -546,6 +573,7 @@ class MainActivity : AppCompatActivity() {
         unit: String,
         min: Int,
         max: Int,
+        step: Int,
         initial: Int,
         textColor: Int,
         accentColor: Int,
@@ -553,6 +581,7 @@ class MainActivity : AppCompatActivity() {
         onChanged: (Int) -> Unit,
         onStop: () -> Unit
     ) {
+        val stepsCount = (max - min) / step
         val label = TextView(this).apply {
             text = "$titlePrefix: $initial$unit"
             setTextColor(textColor)
@@ -560,13 +589,13 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, dp12, 0, 4)
         }
         val seek = SeekBar(this).apply {
-            this.max = max - min
-            this.progress = (initial - min).coerceIn(0, max - min)
+            this.max = stepsCount
+            this.progress = ((initial - min) / step).coerceIn(0, stepsCount)
             thumbTintList = ColorStateList.valueOf(accentColor)
             progressTintList = ColorStateList.valueOf(accentColor)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, value: Int, fromUser: Boolean) {
-                    val realVal = min + value
+                    val realVal = min + value * step
                     label.text = "$titlePrefix: $realVal$unit"
                     onChanged(realVal)
                 }
