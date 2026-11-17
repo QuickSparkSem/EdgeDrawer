@@ -6,7 +6,6 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
-import android.view.Gravity
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -23,9 +22,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var prefs: PrefsManager
     private lateinit var switchEnable: MaterialSwitch
     private lateinit var btnPermission: MaterialButton
+    private lateinit var btnSplitSupport: MaterialButton
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.statusBarColor = Color.parseColor("#0F1117")
+        window.navigationBarColor = Color.parseColor("#0F1117")
         prefs = PrefsManager(this)
 
         val density = resources.displayMetrics.density
@@ -37,7 +39,7 @@ class MainActivity : AppCompatActivity() {
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(42), dp(20), dp(32))
+            setPadding(dp(20), dp(42), dp(20), dp(36))
         }
 
         val title = TextView(this).apply {
@@ -48,35 +50,33 @@ class MainActivity : AppCompatActivity() {
         }
 
         val subtitle = TextView(this).apply {
-            text = "Indice laterale rapido con app recenti e filtro per colore icona"
-            textSize = 14f
+            text = "Indice alfabetico trasparente, filtro colore diretto e apertura Pop-up / Split"
+            textSize = 13.5f
             setTextColor(Color.parseColor("#9AA3B2"))
-            setPadding(0, dp(4), 0, dp(20))
+            setPadding(0, dp(4), 0, dp(18))
         }
 
-        // Card Permessi & Attivazione
+        // --- CARD 1: PERMESSI E ATTIVAZIONE ---
         val cardMain = createCard(dp(16))
-        val cardMainLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-        }
+        val mainLayout = createCardInner(dp(16))
 
         btnPermission = MaterialButton(this).apply {
             text = "1. Concedi permesso 'Mostra sopra altre app'"
             setOnClickListener {
-                val intent = Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:$packageName")
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    )
                 )
-                startActivity(intent)
             }
         }
 
         switchEnable = MaterialSwitch(this).apply {
-            text = "2. Attiva gesture laterale ovunque"
+            text = "2. Attiva indice laterale ovunque"
             setTextColor(Color.WHITE)
-            textSize = 16f
-            setPadding(0, dp(12), 0, dp(4))
+            textSize = 15.5f
+            setPadding(0, dp(10), 0, dp(6))
             isChecked = prefs.isServiceEnabled
             setOnCheckedChangeListener { _, isChecked ->
                 if (isChecked && !Settings.canDrawOverlays(this@MainActivity)) {
@@ -98,10 +98,19 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val btnTest = MaterialButton(this).apply {
-            text = "Prova subito il pannello"
+        btnSplitSupport = MaterialButton(this).apply {
+            text = "3. Abilita Schermo Diviso (Metà sopra/sotto)"
             setBackgroundColor(Color.parseColor("#242B3D"))
             setTextColor(Color.WHITE)
+            setOnClickListener {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+        }
+
+        val btnTest = MaterialButton(this).apply {
+            text = "Apri pannello adesso"
+            setBackgroundColor(Color.parseColor("#1F2636"))
+            setTextColor(Color.parseColor("#4D94FF"))
             setOnClickListener {
                 if (!Settings.canDrawOverlays(this@MainActivity)) {
                     Toast.makeText(this@MainActivity, "Attiva prima il permesso", Toast.LENGTH_SHORT).show()
@@ -116,17 +125,17 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        cardMainLayout.addView(btnPermission)
-        cardMainLayout.addView(switchEnable)
-        cardMainLayout.addView(btnTest)
-        cardMain.addView(cardMainLayout)
+        mainLayout.addView(btnPermission)
+        mainLayout.addView(switchEnable)
+        mainLayout.addView(btnSplitSupport)
+        mainLayout.addView(btnTest)
+        cardMain.addView(mainLayout)
 
-        // Card Personalizzazione
-        val cardSettings = createCard(dp(16))
-        val settingsLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-        }
+        // --- CARD 2: IMPOSTAZIONI TRIGGER ALFABETICO ---
+        val cardTrigger = createCard(dp(16))
+        val triggerLayout = createCardInner(dp(16))
+
+        triggerLayout.addView(createSectionHeader("Trigger Alfabetico sul Bordo", dp(10)))
 
         val sideSwitch = MaterialSwitch(this).apply {
             text = if (prefs.isRightSide) "Lato schermo: Destra" else "Lato schermo: Sinistra"
@@ -139,67 +148,140 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val blurLabel = TextView(this).apply {
-            text = "Intensità effetto Blur: ${prefs.blurRadius}"
+        val cornerSwitch = MaterialSwitch(this).apply {
+            text = if (prefs.isTriggerBottomCorner) "Posizione: Angolo in basso" else "Posizione: Centro verticale"
             setTextColor(Color.WHITE)
-            setPadding(0, dp(14), 0, dp(4))
-        }
-        val blurSeek = SeekBar(this).apply {
-            max = 100
-            progress = prefs.blurRadius
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(sb: SeekBar?, value: Int, fromUser: Boolean) {
-                    prefs.blurRadius = value
-                    blurLabel.text = "Intensità effetto Blur: $value"
-                }
-                override fun onStartTrackingTouch(sb: SeekBar?) {}
-                override fun onStopTrackingTouch(sb: SeekBar?) {}
-            })
+            setPadding(0, dp(6), 0, 0)
+            isChecked = prefs.isTriggerBottomCorner
+            setOnCheckedChangeListener { _, inCorner ->
+                prefs.isTriggerBottomCorner = inCorner
+                text = if (inCorner) "Posizione: Angolo in basso" else "Posizione: Centro verticale"
+                notifyServiceReload()
+            }
         }
 
-        val widthLabel = TextView(this).apply {
-            text = "Larghezza area gesture bordo: ${prefs.triggerWidthDp} dp"
+        val hideTriggerSwitch = MaterialSwitch(this).apply {
+            text = "Nascondi lettere trigger (solo gesture invisibile)"
             setTextColor(Color.WHITE)
-            setPadding(0, dp(14), 0, dp(4))
-        }
-        val widthSeek = SeekBar(this).apply {
-            max = 45
-            progress = prefs.triggerWidthDp
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(sb: SeekBar?, value: Int, fromUser: Boolean) {
-                    val safe = value.coerceAtLeast(12)
-                    prefs.triggerWidthDp = safe
-                    widthLabel.text = "Larghezza area gesture bordo: $safe dp"
-                }
-                override fun onStartTrackingTouch(sb: SeekBar?) {}
-                override fun onStopTrackingTouch(sb: SeekBar?) {
-                    notifyServiceReload()
-                }
-            })
+            setPadding(0, dp(6), 0, 0)
+            isChecked = prefs.isTriggerHidden
+            setOnCheckedChangeListener { _, hidden ->
+                prefs.isTriggerHidden = hidden
+                notifyServiceReload()
+            }
         }
 
-        settingsLayout.addView(sideSwitch)
-        settingsLayout.addView(blurLabel)
-        settingsLayout.addView(blurSeek)
-        settingsLayout.addView(widthLabel)
-        settingsLayout.addView(widthSeek)
-        cardSettings.addView(settingsLayout)
+        triggerLayout.addView(sideSwitch)
+        triggerLayout.addView(cornerSwitch)
+        triggerLayout.addView(hideTriggerSwitch)
 
-        // Guida rapida gesti
+        addSlider(
+            parent = triggerLayout,
+            titlePrefix = "Altezza/Dimensione trigger",
+            unit = "%",
+            min = 28,
+            max = 90,
+            initial = prefs.triggerSizePercent,
+            dp12 = dp(12),
+            onChanged = { prefs.triggerSizePercent = it },
+            onStop = { notifyServiceReload() }
+        )
+
+        addSlider(
+            parent = triggerLayout,
+            titlePrefix = "Larghezza area tocco trigger",
+            unit = " dp",
+            min = 16,
+            max = 44,
+            initial = prefs.triggerWidthDp,
+            dp12 = dp(12),
+            onChanged = { prefs.triggerWidthDp = it },
+            onStop = { notifyServiceReload() }
+        )
+
+        addSlider(
+            parent = triggerLayout,
+            titlePrefix = "Visibilità lettere trigger",
+            unit = "%",
+            min = 5,
+            max = 100,
+            initial = prefs.triggerAlphaPercent,
+            dp12 = dp(12),
+            onChanged = { prefs.triggerAlphaPercent = it },
+            onStop = { notifyServiceReload() }
+        )
+
+        cardTrigger.addView(triggerLayout)
+
+        // --- CARD 3: IMPOSTAZIONI PANNELLO E APP ---
+        val cardPanel = createCard(dp(16))
+        val panelLayout = createCardInner(dp(16))
+
+        panelLayout.addView(createSectionHeader("Pannello Aperto & Icone App", dp(10)))
+
+        val labelsSwitch = MaterialSwitch(this).apply {
+            text = "Mostra etichette nomi app"
+            setTextColor(Color.WHITE)
+            isChecked = prefs.showAppLabels
+            setOnCheckedChangeListener { _, show ->
+                prefs.showAppLabels = show
+            }
+        }
+        panelLayout.addView(labelsSwitch)
+
+        addSlider(
+            parent = panelLayout,
+            titlePrefix = "Dimensione pannello e icone",
+            unit = "%",
+            min = 70,
+            max = 130,
+            initial = prefs.panelScalePercent,
+            dp12 = dp(12),
+            onChanged = { prefs.panelScalePercent = it },
+            onStop = {}
+        )
+
+        addSlider(
+            parent = panelLayout,
+            titlePrefix = "Opacità sfondo pannello",
+            unit = "%",
+            min = 20,
+            max = 100,
+            initial = prefs.panelAlphaPercent,
+            dp12 = dp(12),
+            onChanged = { prefs.panelAlphaPercent = it },
+            onStop = {}
+        )
+
+        addSlider(
+            parent = panelLayout,
+            titlePrefix = "Intensità effetto Blur",
+            unit = "",
+            min = 0,
+            max = 100,
+            initial = prefs.blurRadius,
+            dp12 = dp(12),
+            onChanged = { prefs.blurRadius = it },
+            onStop = {}
+        )
+
+        cardPanel.addView(panelLayout)
+
+        // Guida rapida
         val guideText = TextView(this).apply {
-            text = "• Scorri dal bordo verso l'interno per aprire l'indice.\n" +
-                "• Senza staccare il dito: scorri su ↓ (Recenti) o A–Z, spostati sull'app desiderata e alza il dito per avviarla subito.\n" +
-                "• Alzando il dito: il pannello resta aperto e puoi toccare la cartella colori in basso per filtrare le app solo di quel colore."
+            text = "• Scorri sul trigger alfabetico per aprire su ↓ (Recenti) o A–Z.\n" +
+                "• Senza staccare il dito: passa sui pallini colorati in basso per filtrare per colore, poi risali sull'alfabeto.\n" +
+                "• Tieni fermo il dito su un'app: appaiono di fianco 'Pop-up', 'Metà sopra' e 'Metà sotto' (trascina verso il centro e rilascia per sceglierli)."
             setTextColor(Color.parseColor("#9AA3B2"))
             textSize = 13f
-            setPadding(dp(4), dp(18), dp(4), 0)
-            gravity = Gravity.START
+            setPadding(dp(4), dp(8), dp(4), 0)
         }
 
         container.addView(title)
         container.addView(subtitle)
         container.addView(cardMain)
-        container.addView(cardSettings)
+        container.addView(cardTrigger)
+        container.addView(cardPanel)
         container.addView(guideText)
         root.addView(container)
         setContentView(root)
@@ -213,6 +295,14 @@ class MainActivity : AppCompatActivity() {
         } else {
             "1. Concedi permesso 'Mostra sopra altre app'"
         }
+
+        val hasSplit = EdgeAccessibilityService.instance != null
+        btnSplitSupport.text = if (hasSplit) {
+            "3. Schermo Diviso (Metà sopra/sotto) OK ✓"
+        } else {
+            "3. Abilita Schermo Diviso (Metà sopra/sotto)"
+        }
+
         if (hasOverlay && prefs.isServiceEnabled) {
             ContextCompat.startForegroundService(this, Intent(this, EdgeOverlayService::class.java))
         }
@@ -239,5 +329,57 @@ class MainActivity : AppCompatActivity() {
                 bottomMargin = marginBottomPx
             }
         }
+    }
+
+    private fun createCardInner(padPx: Int): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(padPx, padPx, padPx, padPx)
+        }
+    }
+
+    private fun createSectionHeader(textStr: String, bottomPad: Int): TextView {
+        return TextView(this).apply {
+            text = textStr
+            textSize = 16f
+            setTextColor(Color.parseColor("#4D94FF"))
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 0, 0, bottomPad)
+        }
+    }
+
+    private fun addSlider(
+        parent: LinearLayout,
+        titlePrefix: String,
+        unit: String,
+        min: Int,
+        max: Int,
+        initial: Int,
+        dp12: Int,
+        onChanged: (Int) -> Unit,
+        onStop: () -> Unit
+    ) {
+        val label = TextView(this).apply {
+            text = "$titlePrefix: $initial$unit"
+            setTextColor(Color.WHITE)
+            setPadding(0, dp12, 0, 4)
+        }
+        val seek = SeekBar(this).apply {
+            this.max = max - min
+            this.progress = (initial - min).coerceIn(0, max - min)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, value: Int, fromUser: Boolean) {
+                    val realVal = min + value
+                    label.text = "$titlePrefix: $realVal$unit"
+                    onChanged(realVal)
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) {
+                    onStop()
+                }
+            })
+        }
+        parent.addView(label)
+        parent.addView(seek)
     }
 }
