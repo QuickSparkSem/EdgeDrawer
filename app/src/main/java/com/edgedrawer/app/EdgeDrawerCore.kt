@@ -12,6 +12,9 @@ import android.graphics.Color
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.core.content.ContextCompat
 import java.text.Normalizer
 import java.util.concurrent.Executors
@@ -51,6 +54,62 @@ data class AppEntry(
     val installTime: Long,
     val colorCategory: AppColorFilter
 )
+
+object HapticHelper {
+    enum class PulseType {
+        TICK,
+        APP_HOVER,
+        LONG_HOLD,
+        CONFIRM
+    }
+
+    fun trigger(context: Context, prefs: PrefsManager, type: PulseType) {
+        val strength = prefs.hapticStrengthPercent.coerceIn(0, 100)
+        if (strength <= 0) return
+
+        val vibrator: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+            vm?.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+        }
+
+        if (vibrator == null || !vibrator.hasVibrator()) return
+
+        val baseDurationMs = when (type) {
+            PulseType.TICK -> 10L
+            PulseType.APP_HOVER -> 14L
+            PulseType.LONG_HOLD -> 28L
+            PulseType.CONFIRM -> 20L
+        }
+
+        val baseAmplitude = when (type) {
+            PulseType.TICK -> 145
+            PulseType.APP_HOVER -> 175
+            PulseType.LONG_HOLD -> 240
+            PulseType.CONFIRM -> 210
+        }
+
+        val ratio = strength / 100f
+        val scaledAmplitude = (baseAmplitude * ratio).toInt().coerceIn(1, 255)
+        val scaledDuration = (baseDurationMs * (0.55f + 0.45f * ratio)).toLong().coerceAtLeast(4L)
+
+        try {
+            if (vibrator.hasAmplitudeControl()) {
+                vibrator.vibrate(
+                    VibrationEffect.createOneShot(scaledDuration, scaledAmplitude)
+                )
+            } else {
+                val fallbackDuration = (baseDurationMs * ratio * 1.4f).toLong().coerceIn(3L, 45L)
+                vibrator.vibrate(
+                    VibrationEffect.createOneShot(fallbackDuration, VibrationEffect.DEFAULT_AMPLITUDE)
+                )
+            }
+        } catch (_: Exception) {
+        }
+    }
+}
 
 object IconColorAnalyzer {
 
@@ -320,9 +379,15 @@ class PrefsManager(private val context: Context) {
         get() = prefs.getInt("panel_scale_percent", 100)
         set(value) = prefs.edit().putInt("panel_scale_percent", value).apply()
 
+    // Opacità sfondo sotto l'elenco app (default molto opaco: 88%)
     var panelBgAlphaPercent: Int
-        get() = prefs.getInt("panel_bg_alpha_percent", 72)
-        set(value) = prefs.edit().putInt("panel_bg_alpha_percent", value).apply()
+        get() = prefs.getInt("panel_bg_alpha_percent", 88).coerceIn(0, 100)
+        set(value) = prefs.edit().putInt("panel_bg_alpha_percent", value.coerceIn(0, 100)).apply()
+
+    // Opacità sfondo sul lato opposto dello schermo (default molto trasparente: 10%)
+    var panelBgOppositeAlphaPercent: Int
+        get() = prefs.getInt("panel_bg_opposite_alpha_percent", 10).coerceIn(0, 100)
+        set(value) = prefs.edit().putInt("panel_bg_opposite_alpha_percent", value.coerceIn(0, 100)).apply()
 
     var indexBarAlphaPercent: Int
         get() = prefs.getInt("index_bar_alpha_percent", 80)
@@ -348,11 +413,14 @@ class PrefsManager(private val context: Context) {
         get() = prefs.getInt("wave_strength_percent", 75)
         set(value) = prefs.edit().putInt("wave_strength_percent", value).apply()
 
+    var hapticStrengthPercent: Int
+        get() = prefs.getInt("haptic_strength_percent", 65).coerceIn(0, 100)
+        set(value) = prefs.edit().putInt("haptic_strength_percent", value.coerceIn(0, 100)).apply()
+
     var showAppLabels: Boolean
         get() = prefs.getBoolean("show_app_labels", true)
         set(value) = prefs.edit().putBoolean("show_app_labels", value).apply()
 
-    // Numero massimo app recenti (da 10 a 100 a step di 10)
     var recentCount: Int
         get() = prefs.getInt("recent_count", 20).coerceIn(10, 100)
         set(value) = prefs.edit().putInt("recent_count", value.coerceIn(10, 100)).apply()
