@@ -10,6 +10,7 @@ import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Build
@@ -18,12 +19,13 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import android.content.pm.ServiceInfo
 import kotlin.math.abs
 
 class EdgeOverlayService : Service() {
@@ -66,8 +68,8 @@ class EdgeOverlayService : Service() {
         when (intent?.action) {
             ACTION_OPEN_DRAWER -> openDrawer(
                 fromContinuousSwipe = false,
-                initialLetter = '★',
-                initialY = 300f
+                initialSlot = 0,
+                initialRawY = 300f
             )
             ACTION_RELOAD_CONFIG -> {
                 removeTriggerHandle()
@@ -91,7 +93,7 @@ class EdgeOverlayService : Service() {
             "EdgeDrawer Gesture",
             NotificationManager.IMPORTANCE_LOW
         ).apply {
-            description = "Mantiene attiva la gesture laterale A-Z"
+            description = "Mantiene attiva la gesture verticale A-Z"
         }
         manager.createNotificationChannel(channel)
 
@@ -104,7 +106,7 @@ class EdgeOverlayService : Service() {
 
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("EdgeDrawer attivo")
-            .setContentText("Scorri dall'indice laterale per aprire le app")
+            .setContentText("Scorri in alto o in basso sul bordo per aprire l'indice A-Z")
             .setSmallIcon(android.R.drawable.ic_menu_sort_alphabetically)
             .setContentIntent(openAppIntent)
             .setOngoing(true)
@@ -121,63 +123,70 @@ class EdgeOverlayService : Service() {
         }
     }
 
+    /**
+     * Posiziona il trigger esattamente allineato alla stessa posizione verticale e altezza
+     * dell'alfabeto del pannello, attivandosi con uno scorrimento verticale (alto/basso)
+     * così da non cozzare mai con la gesture Indietro di sistema.
+     */
     private fun setupTriggerHandle() {
         if (triggerView != null) return
 
         val density = resources.displayMetrics.density
         val screenH = resources.displayMetrics.heightPixels
-        val sizeRatio = (prefs.triggerSizePercent / 100f).coerceIn(0.28f, 0.90f)
+        val scale = (prefs.panelScalePercent / 100f).coerceIn(0.65f, 1.35f)
 
-        val widthPx = (prefs.triggerWidthDp * density).toInt().coerceAtLeast((16 * density).toInt())
-        val heightPx = (screenH * sizeRatio).toInt()
+        val widthPx = ((prefs.triggerWidthDp * density).coerceAtLeast(24f * density) * scale).toInt()
+        val heightRatio = (prefs.barHeightPercent / 100f).coerceIn(0.30f, 0.90f)
+        val lettersHeightPx = (screenH * heightRatio).toInt()
+
+        val pad = 6f * density
+        val letterStepH = (lettersHeightPx - pad * 2f) / EdgeIndexSlots.LETTERS.size
+        val totalBarHeightPx = (pad * 2f + letterStepH * EdgeIndexSlots.TOTAL_SLOTS).toInt()
+
+        val topSafeMargin = (28f * density).toInt()
+        val bottomSafeMargin = (16f * density).toInt()
+        val availableSpan = (screenH - topSafeMargin - bottomSafeMargin - totalBarHeightPx).coerceAtLeast(0)
+        val posRatio = (prefs.verticalPositionPercent / 100f).coerceIn(0f, 1f)
+        val barTopY = topSafeMargin + (availableSpan * posRatio).toInt()
 
         val handle = EdgeTriggerView(this, prefs)
 
-        val verticalGravity = if (prefs.isTriggerBottomCorner) {
-            Gravity.BOTTOM
-        } else {
-            Gravity.CENTER_VERTICAL
-        }
-
         val params = WindowManager.LayoutParams(
             widthPx,
-            heightPx,
+            lettersHeightPx,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = (if (prefs.isRightSide) Gravity.END else Gravity.START) or verticalGravity
-            if (prefs.isTriggerBottomCorner) {
-                y = (28 * density).toInt()
-            }
+            gravity = (if (prefs.isRightSide) Gravity.END else Gravity.START) or Gravity.TOP
+            x = (6f * density).toInt()
+            y = barTopY
         }
 
-        var downX = 0f
         var downY = 0f
         var triggeredInThisTouch = false
-        val swipeThreshold = 12 * density
+        val verticalTriggerThreshold = 8f * density
 
         handle.setOnTouchListener { _, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    downX = event.rawX
                     downY = event.rawY
                     triggeredInThisTouch = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     if (!triggeredInThisTouch) {
-                        val dx = if (prefs.isRightSide) downX - event.rawX else event.rawX - downX
                         val dy = abs(event.rawY - downY)
-                        // Si apre sia scorrendo verso l'interno sia scorrendo verticalmente sull'alfabeto
-                        if (dx > swipeThreshold || dy > swipeThreshold * 1.3f) {
+                        // Attivazione tramite scorrimento verticale (su/giù) lungo il bordo
+                        if (dy >= verticalTriggerThreshold) {
                             triggeredInThisTouch = true
-                            val startLetter = handle.getLetterAtY(event.y)
+                            handle.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            val startSlot = handle.getSlotAtY(event.y)
                             openDrawer(
                                 fromContinuousSwipe = true,
-                                initialLetter = startLetter,
-                                initialY = event.rawY
+                                initialSlot = startSlot,
+                                initialRawY = event.rawY
                             )
                         }
                     } else {
@@ -189,12 +198,13 @@ class EdgeOverlayService : Service() {
                     if (triggeredInThisTouch) {
                         drawerView?.handleExternalDrag(event.rawX, event.rawY, event.action)
                     } else {
-                        // Tocco singolo su una lettera del trigger -> apre il pannello su quella lettera
-                        val tappedLetter = handle.getLetterAtY(event.y)
+                        // Tocco rapido su una lettera del bordo -> apre su quella lettera
+                        handle.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        val tappedSlot = handle.getSlotAtY(event.y)
                         openDrawer(
                             fromContinuousSwipe = false,
-                            initialLetter = tappedLetter,
-                            initialY = event.rawY
+                            initialSlot = tappedSlot,
+                            initialRawY = event.rawY
                         )
                     }
                     triggeredInThisTouch = false
@@ -220,11 +230,14 @@ class EdgeOverlayService : Service() {
 
     private fun openDrawer(
         fromContinuousSwipe: Boolean,
-        initialLetter: Char,
-        initialY: Float
+        initialSlot: Int,
+        initialRawY: Float
     ) {
         if (isDrawerOpen) return
         isDrawerOpen = true
+
+        // Nasconde il trigger sottostante mentre il pannello è aperto per evitare due alfabeti sovrapposti
+        triggerView?.visibility = View.INVISIBLE
 
         val overlay = EdgeDrawerView(
             context = this,
@@ -239,10 +252,11 @@ class EdgeOverlayService : Service() {
             }
         )
 
+        val blurVal = prefs.blurRadius.coerceIn(0, 120)
         var flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && prefs.blurRadius > 0) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blurVal > 0) {
             flags = flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
         }
 
@@ -254,27 +268,32 @@ class EdgeOverlayService : Service() {
             PixelFormat.TRANSLUCENT
         )
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && prefs.blurRadius > 0) {
-            params.blurBehindRadius = prefs.blurRadius
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blurVal > 0) {
+            params.blurBehindRadius = blurVal
         }
 
         drawerView = overlay
-        overlay.alpha = 0f
         windowManager.addView(overlay, params)
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blurVal > 0) {
+            windowManager.updateViewLayout(overlay, params)
+        }
+
         overlay.post {
-            overlay.prepareOpen(fromContinuousSwipe, initialLetter, initialY)
-            overlay.animate().alpha(1f).setDuration(110L).start()
+            overlay.prepareOpen(fromContinuousSwipe, initialSlot, initialRawY)
         }
     }
 
     private fun closeDrawer() {
-        val current = drawerView ?: return
+        val current = drawerView
         drawerView = null
         isDrawerOpen = false
-        try {
-            windowManager.removeView(current)
-        } catch (_: Exception) {
+        triggerView?.visibility = View.VISIBLE
+        if (current != null) {
+            try {
+                windowManager.removeView(current)
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -296,7 +315,6 @@ class EdgeOverlayService : Service() {
                 launchIntent.addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK
                 )
-                // Compatibilità extra per finestra mobile su MIUI / HyperOS / POCO
                 launchIntent.putExtra("miui.intent.extra.OPEN_IN_FREEFORM", true)
 
                 val marginX = (screenW * 0.10f).toInt()
