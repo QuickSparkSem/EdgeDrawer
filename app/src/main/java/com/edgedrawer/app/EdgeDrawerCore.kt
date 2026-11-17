@@ -19,21 +19,24 @@ import androidx.core.content.ContextCompat
 import java.text.Normalizer
 import java.util.concurrent.Executors
 
+// Ordine pallini dal più alto al più vicino alla 'A':
+// l'ultimo elemento (ALL - Bianco) si trova subito sopra la lettera 'A'
 enum class AppColorFilter(val label: String, val swatchColor: Int) {
-    ALL("Tutti", Color.WHITE),
-    RED("Rosso", Color.parseColor("#FF4B4B")),
-    YELLOW("Giallo", Color.parseColor("#FFD23F")),
-    GREEN("Verde", Color.parseColor("#2EE585")),
-    BLUE("Blu", Color.parseColor("#3B9EFF")),
+    MONO("Bianco/Nero", Color.parseColor("#9AA3B2")),
     PURPLE("Viola", Color.parseColor("#B36BFF")),
-    MONO("Bianco/Nero", Color.parseColor("#9AA3B2"))
+    BLUE("Blu", Color.parseColor("#3B9EFF")),
+    GREEN("Verde", Color.parseColor("#2EE585")),
+    YELLOW("Giallo", Color.parseColor("#FFD23F")),
+    RED("Rosso", Color.parseColor("#FF4B4B")),
+    ALL("Tutte le app", Color.WHITE)
 }
 
 enum class LaunchWindowMode(val title: String) {
     NORMAL("Normale"),
     SPLIT_TOP("Schermo diviso su"),
     POPUP("Pop-up"),
-    SPLIT_BOTTOM("Schermo diviso giù")
+    SPLIT_BOTTOM("Schermo diviso giù"),
+    APP_INFO("ⓘ Info App")
 }
 
 enum class OneUIAccent(val label: String, val colorInt: Int) {
@@ -52,7 +55,8 @@ data class AppEntry(
     val iconBitmap: Bitmap,
     val firstLetter: Char,
     val installTime: Long,
-    val colorCategory: AppColorFilter
+    val colorCategory: AppColorFilter,
+    val isArchived: Boolean = false
 )
 
 object HapticHelper {
@@ -145,7 +149,8 @@ object IconColorAnalyzer {
 
         var bestIdx = AppColorFilter.MONO.ordinal
         var bestVal = 0
-        for (i in 1 until counts.size) {
+        for (i in counts.indices) {
+            if (AppColorFilter.entries[i] == AppColorFilter.ALL) continue
             if (counts[i] > bestVal) {
                 bestVal = counts[i]
                 bestIdx = i
@@ -155,8 +160,14 @@ object IconColorAnalyzer {
     }
 }
 
-class AppRepository(private val context: Context) {
+class AppRepository(private val context: Context, private val prefs: PrefsManager) {
     private val executor = Executors.newSingleThreadExecutor()
+
+    @Volatile
+    private var allInstalledApps: List<AppEntry> = emptyList()
+
+    @Volatile
+    private var visibleApps: List<AppEntry> = emptyList()
 
     @Volatile
     private var letterCache: Map<Pair<Char, AppColorFilter>, List<AppEntry>> = emptyMap()
@@ -186,77 +197,133 @@ class AppRepository(private val context: Context) {
         }
     }
 
-    fun reloadAppsAsync() {
+    fun reloadAppsAsync(onComplete: (() -> Unit)? = null) {
         executor.execute {
             val pm = context.packageManager
             val mainIntent = Intent(Intent.ACTION_MAIN, null).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
-            val resolved = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                pm.queryIntentActivities(mainIntent, PackageManager.ResolveInfoFlags.of(0L))
+
+            // Include anche le app archiviate dal sistema (Android 15/16+)
+            val resolved = if (Build.VERSION.SDK_INT >= 35) {
+                val flags = PackageManager.MATCH_ALL.toLong() or PackageManager.MATCH_ARCHIVED_PACKAGES
+                pm.queryIntentActivities(mainIntent, PackageManager.ResolveInfoFlags.of(flags))
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.queryIntentActivities(
+                    mainIntent,
+                    PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong())
+                )
             } else {
                 @Suppress("DEPRECATION")
-                pm.queryIntentActivities(mainIntent, 0)
+                pm.queryIntentActivities(mainIntent, PackageManager.MATCH_ALL)
             }
 
-            val iconSizePx = (58 * context.resources.displayMetrics.density).toInt().coerceAtLeast(76)
+            val iconSizePx = (64 * context.resources.displayMetrics.density).toInt().coerceAtLeast(80)
             val myPkg = context.packageName
+            val loadedMap = LinkedHashMap<String, AppEntry>()
 
-            val loaded = resolved.asSequence()
-                .filter { it.activityInfo?.packageName != myPkg }
-                .distinctBy { it.activityInfo.packageName }
-                .mapNotNull { info ->
-                    try {
-                        val pkg = info.activityInfo.packageName
-                        val label = info.loadLabel(pm).toString()
-                        val bitmap = IconColorAnalyzer.drawableToBitmap(info.loadIcon(pm), iconSizePx)
-                        val installTime = try {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                pm.getPackageInfo(pkg, PackageManager.PackageInfoFlags.of(0L)).firstInstallTime
-                            } else {
-                                @Suppress("DEPRECATION")
-                                pm.getPackageInfo(pkg, 0).firstInstallTime
-                            }
-                        } catch (_: Exception) {
-                            0L
-                        }
-                        AppEntry(
-                            label = label,
-                            shortLabel = if (label.length > 11) label.take(10) + "…" else label,
-                            packageName = pkg,
-                            iconBitmap = bitmap,
-                            firstLetter = IconColorAnalyzer.normalizeFirstLetter(label),
-                            installTime = installTime,
-                            colorCategory = IconColorAnalyzer.detectDominantColor(bitmap)
-                        )
-                    } catch (_: Exception) {
-                        null
+            for (info in resolved) {
+                try {
+                    val pkg = info.activityInfo?.packageName ?: continue
+                    if (pkg == myPkg || loadedMap.containsKey(pkg)) continue
+
+                    val label = info.loadLabel(pm).toString()
+                    val isArchived = if (Build.VERSION.SDK_INT >= 35) {
+                        info.activityInfo?.applicationInfo?.isArchived == true
+                    } else {
+                        false
                     }
-                }
-                .sortedBy { it.label.lowercase() }
-                .toList()
+                    val bitmap = IconColorAnalyzer.drawableToBitmap(info.loadIcon(pm), iconSizePx)
+                    val installTime = try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            pm.getPackageInfo(pkg, PackageManager.PackageInfoFlags.of(0L)).firstInstallTime
+                        } else {
+                            @Suppress("DEPRECATION")
+                            pm.getPackageInfo(pkg, 0).firstInstallTime
+                        }
+                    } catch (_: Exception) {
+                        0L
+                    }
 
-            val newLetterCache = HashMap<Pair<Char, AppColorFilter>, List<AppEntry>>()
-            val newRecentCache = HashMap<AppColorFilter, List<AppEntry>>()
-            val sortedByRecent = loaded.sortedByDescending { it.installTime }
-
-            for (color in AppColorFilter.entries) {
-                val filtered = if (color == AppColorFilter.ALL) loaded else loaded.filter { it.colorCategory == color }
-                newRecentCache[color] = if (color == AppColorFilter.ALL) sortedByRecent else sortedByRecent.filter { it.colorCategory == color }
-                val grouped = filtered.groupBy { it.firstLetter }
-                for (ch in 'A'..'Z') {
-                    newLetterCache[ch to color] = grouped[ch] ?: emptyList()
+                    loadedMap[pkg] = AppEntry(
+                        label = label,
+                        shortLabel = if (label.length > 11) label.take(10) + "…" else label,
+                        packageName = pkg,
+                        iconBitmap = bitmap,
+                        firstLetter = IconColorAnalyzer.normalizeFirstLetter(label),
+                        installTime = installTime,
+                        colorCategory = IconColorAnalyzer.detectDominantColor(bitmap),
+                        isArchived = isArchived
+                    )
+                } catch (_: Exception) {
                 }
             }
 
-            letterCache = newLetterCache
-            recentCache = newRecentCache
+            // Integrazione extra per eventuali pacchetti archiviati non inclusi in queryIntentActivities
+            if (Build.VERSION.SDK_INT >= 35) {
+                try {
+                    val allPkgs = pm.getInstalledPackages(
+                        PackageManager.PackageInfoFlags.of(PackageManager.MATCH_ARCHIVED_PACKAGES)
+                    )
+                    for (pkgInfo in allPkgs) {
+                        val pkg = pkgInfo.packageName ?: continue
+                        if (pkg == myPkg || loadedMap.containsKey(pkg)) continue
+                        val appInfo = pkgInfo.applicationInfo ?: continue
+                        if (appInfo.isArchived) {
+                            val label = pm.getApplicationLabel(appInfo).toString()
+                            val bitmap = IconColorAnalyzer.drawableToBitmap(pm.getApplicationIcon(appInfo), iconSizePx)
+                            loadedMap[pkg] = AppEntry(
+                                label = label,
+                                shortLabel = if (label.length > 11) label.take(10) + "…" else label,
+                                packageName = pkg,
+                                iconBitmap = bitmap,
+                                firstLetter = IconColorAnalyzer.normalizeFirstLetter(label),
+                                installTime = pkgInfo.firstInstallTime,
+                                colorCategory = IconColorAnalyzer.detectDominantColor(bitmap),
+                                isArchived = true
+                            )
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+            }
+
+            allInstalledApps = loadedMap.values.sortedBy { it.label.lowercase() }
+            rebuildFilteredCaches()
+            onComplete?.invoke()
         }
     }
+
+    fun rebuildFilteredCaches() {
+        val hiddenSet = prefs.hiddenPackages
+        val visible = allInstalledApps.filter { it.packageName !in hiddenSet }
+
+        val newLetterCache = HashMap<Pair<Char, AppColorFilter>, List<AppEntry>>()
+        val newRecentCache = HashMap<AppColorFilter, List<AppEntry>>()
+        val sortedByRecent = visible.sortedByDescending { it.installTime }
+
+        for (color in AppColorFilter.entries) {
+            val filtered = if (color == AppColorFilter.ALL) visible else visible.filter { it.colorCategory == color }
+            newRecentCache[color] = if (color == AppColorFilter.ALL) sortedByRecent else sortedByRecent.filter { it.colorCategory == color }
+            val grouped = filtered.groupBy { it.firstLetter }
+            for (ch in 'A'..'Z') {
+                newLetterCache[ch to color] = grouped[ch] ?: emptyList()
+            }
+        }
+
+        visibleApps = visible
+        letterCache = newLetterCache
+        recentCache = newRecentCache
+    }
+
+    fun getAllInstalledApps(): List<AppEntry> = allInstalledApps
 
     fun getAppsForLetter(letter: Char, colorFilter: AppColorFilter): List<AppEntry> =
         letterCache[letter to colorFilter] ?: emptyList()
 
     fun getRecentApps(limit: Int, colorFilter: AppColorFilter): List<AppEntry> =
         (recentCache[colorFilter] ?: emptyList()).take(limit)
+
+    fun getAllAppsByColor(colorFilter: AppColorFilter): List<AppEntry> =
+        if (colorFilter == AppColorFilter.ALL) visibleApps else visibleApps.filter { it.colorCategory == colorFilter }
 
     fun hasAppsForLetter(letter: Char, colorFilter: AppColorFilter): Boolean =
         !(letterCache[letter to colorFilter].isNullOrEmpty())
@@ -290,13 +357,42 @@ class PrefsManager(private val context: Context) {
         else -> (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
     }
 
+    // Protezioni contestuali
+    var disableInLandscape: Boolean
+        get() = prefs.getBoolean("disable_in_landscape", true)
+        set(value) = prefs.edit().putBoolean("disable_in_landscape", value).apply()
+
+    var disableOnKeyboard: Boolean
+        get() = prefs.getBoolean("disable_on_keyboard", true)
+        set(value) = prefs.edit().putBoolean("disable_on_keyboard", value).apply()
+
+    // App in cui disabilitare il trigger (Lista nera)
+    var blacklistPackages: Set<String>
+        get() = prefs.getStringSet("blacklist_packages", emptySet()) ?: emptySet()
+        set(value) = prefs.edit().putStringSet("blacklist_packages", value).apply()
+
+    // App nascoste dall'elenco del drawer
+    var hiddenPackages: Set<String>
+        get() = prefs.getStringSet("hidden_packages", emptySet()) ?: emptySet()
+        set(value) = prefs.edit().putStringSet("hidden_packages", value).apply()
+
+    // Trigger: colore a spettro e profondità ombra
+    var triggerCustomColor: Int
+        get() = prefs.getInt("trigger_custom_color", Color.WHITE)
+        set(value) = prefs.edit().putInt("trigger_custom_color", value).apply()
+
+    var triggerShadowDepthPercent: Int
+        get() = prefs.getInt("trigger_shadow_depth_percent", 75).coerceIn(0, 100)
+        set(value) = prefs.edit().putInt("trigger_shadow_depth_percent", value.coerceIn(0, 100)).apply()
+
+    // Distanza indice trigger dal lato del display (0 dp = sotto il bordo fisico)
+    var triggerEdgeOffsetDp: Int
+        get() = prefs.getInt("trigger_edge_offset_dp", 0).coerceIn(0, 20)
+        set(value) = prefs.edit().putInt("trigger_edge_offset_dp", value.coerceIn(0, 20)).apply()
+
     var isTriggerHidden: Boolean
         get() = prefs.getBoolean("trigger_hidden", false)
         set(value) = prefs.edit().putBoolean("trigger_hidden", value).apply()
-
-    var isTriggerTextBlack: Boolean
-        get() = prefs.getBoolean("trigger_text_black", false)
-        set(value) = prefs.edit().putBoolean("trigger_text_black", value).apply()
 
     var barHeightPercent: Int
         get() = prefs.getInt("bar_height_percent", 78)
@@ -311,7 +407,7 @@ class PrefsManager(private val context: Context) {
         set(value) = prefs.edit().putInt("trigger_width_dp", value).apply()
 
     var triggerAlphaPercent: Int
-        get() = prefs.getInt("trigger_alpha_percent", 60)
+        get() = prefs.getInt("trigger_alpha_percent", 65)
         set(value) = prefs.edit().putInt("trigger_alpha_percent", value).apply()
 
     var letterSpacingExtraDp: Int
@@ -326,9 +422,21 @@ class PrefsManager(private val context: Context) {
         get() = prefs.getBoolean("apps_bottom_to_top", true)
         set(value) = prefs.edit().putBoolean("apps_bottom_to_top", value).apply()
 
+    // TRE SCALE SEPARATE:
+    // 1. Scala colonna app e icone
     var panelScalePercent: Int
-        get() = prefs.getInt("panel_scale_percent", 100)
-        set(value) = prefs.edit().putInt("panel_scale_percent", value).apply()
+        get() = prefs.getInt("panel_scale_percent", 100).coerceIn(65, 140)
+        set(value) = prefs.edit().putInt("panel_scale_percent", value.coerceIn(65, 140)).apply()
+
+    // 2. Dimensione etichette nomi app (sp)
+    var appLabelSizeSp: Int
+        get() = prefs.getInt("app_label_size_sp", 11).coerceIn(8, 18)
+        set(value) = prefs.edit().putInt("app_label_size_sp", value.coerceIn(8, 18)).apply()
+
+    // 3. Dimensione indice alfabetico (coerente tra trigger e pannello aperto)
+    var indexScalePercent: Int
+        get() = prefs.getInt("index_scale_percent", 100).coerceIn(65, 140)
+        set(value) = prefs.edit().putInt("index_scale_percent", value.coerceIn(65, 140)).apply()
 
     var panelBgAlphaPercent: Int
         get() = prefs.getInt("panel_bg_alpha_percent", 88).coerceIn(0, 100)
@@ -339,23 +447,20 @@ class PrefsManager(private val context: Context) {
         set(value) = prefs.edit().putInt("panel_bg_opposite_alpha_percent", value.coerceIn(0, 100)).apply()
 
     var indexBarAlphaPercent: Int
-        get() = prefs.getInt("index_bar_alpha_percent", 80)
+        get() = prefs.getInt("index_bar_alpha_percent", 82)
         set(value) = prefs.edit().putInt("index_bar_alpha_percent", value).apply()
 
-    // Forza impulso onda colore dal lato indice al lato opposto (0% - 100%)
     var colorWaveStrengthPercent: Int
         get() = prefs.getInt("color_wave_strength_percent", 65).coerceIn(0, 100)
         set(value) = prefs.edit().putInt("color_wave_strength_percent", value.coerceIn(0, 100)).apply()
 
-    // Distanza dal bordo alto/basso dello schermo per attivare lo scorrimento continuo app (dp)
     var autoScrollEdgeZoneDp: Int
         get() = prefs.getInt("auto_scroll_edge_zone_dp", 64).coerceIn(20, 150)
         set(value) = prefs.edit().putInt("auto_scroll_edge_zone_dp", value.coerceIn(20, 150)).apply()
 
-    // Velocità scorrimento continuo in app al secondo (1 - 15 app/s)
     var autoScrollAppsPerSec: Int
-        get() = prefs.getInt("auto_scroll_apps_per_sec", 5).coerceIn(1, 15)
-        set(value) = prefs.edit().putInt("auto_scroll_apps_per_sec", value.coerceIn(1, 15)).apply()
+        get() = prefs.getInt("auto_scroll_apps_per_sec", 6).coerceIn(1, 18)
+        set(value) = prefs.edit().putInt("auto_scroll_apps_per_sec", value.coerceIn(1, 18)).apply()
 
     var appSpacingDp: Int
         get() = prefs.getInt("app_spacing_dp", 12)
