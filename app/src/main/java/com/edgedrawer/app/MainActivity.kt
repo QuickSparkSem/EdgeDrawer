@@ -49,28 +49,25 @@ class MainActivity : AppCompatActivity() {
         val density = resources.displayMetrics.density
         fun dp(v: Int) = (v * density).toInt()
 
-        val root = ScrollView(this).apply {
-            setBackgroundColor(bgMain)
-        }
-
+        val root = ScrollView(this).apply { setBackgroundColor(bgMain) }
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(36), dp(18), dp(36))
         }
 
-        val title = TextView(this).apply {
+        container.addView(TextView(this).apply {
             text = "EdgeDrawer"
             textSize = 30f
             setTextColor(textPrimary)
             setTypeface(null, Typeface.BOLD)
-        }
+        })
 
-        val subtitle = TextView(this).apply {
+        container.addView(TextView(this).apply {
             text = "Colori sopra la A, indice A–Z, recenti sotto la Z e finestre rapide"
             textSize = 13.5f
             setTextColor(textSecondary)
             setPadding(0, dp(4), 0, dp(18))
-        }
+        })
 
         // --- CARD 1: ATTIVAZIONE & PERMESSI ---
         val cardMain = createCard(cardBg, dp(16))
@@ -81,12 +78,7 @@ class MainActivity : AppCompatActivity() {
             backgroundTintList = ColorStateList.valueOf(accent)
             setTextColor(Color.WHITE)
             setOnClickListener {
-                startActivity(
-                    Intent(
-                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        Uri.parse("package:$packageName")
-                    )
-                )
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             }
         }
 
@@ -99,32 +91,20 @@ class MainActivity : AppCompatActivity() {
             setOnCheckedChangeListener { _, isChecked ->
                 if (isChecked && !Settings.canDrawOverlays(this@MainActivity)) {
                     this.isChecked = false
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Concedi prima il permesso 'Mostra sopra altre app'",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    Toast.makeText(this@MainActivity, "Concedi prima il permesso 'Mostra sopra altre app'", Toast.LENGTH_SHORT).show()
                     return@setOnCheckedChangeListener
                 }
                 prefs.isServiceEnabled = isChecked
                 val serviceIntent = Intent(this@MainActivity, EdgeOverlayService::class.java)
-                if (isChecked) {
-                    ContextCompat.startForegroundService(this@MainActivity, serviceIntent)
-                } else {
-                    stopService(serviceIntent)
-                }
+                if (isChecked) ContextCompat.startForegroundService(this@MainActivity, serviceIntent) else stopService(serviceIntent)
             }
         }
 
         btnSplitSupport = MaterialButton(this).apply {
             text = "3. Abilita Schermo Diviso (Metà sopra/sotto)"
-            backgroundTintList = ColorStateList.valueOf(
-                if (isNight) Color.parseColor("#252B3B") else Color.parseColor("#E6EAF2")
-            )
+            backgroundTintList = ColorStateList.valueOf(if (isNight) Color.parseColor("#252B3B") else Color.parseColor("#E6EAF2"))
             setTextColor(textPrimary)
-            setOnClickListener {
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            }
+            setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         }
 
         val btnTest = MaterialButton(this).apply {
@@ -138,10 +118,10 @@ class MainActivity : AppCompatActivity() {
                 }
                 prefs.isServiceEnabled = true
                 switchEnable.isChecked = true
-                val intent = Intent(this@MainActivity, EdgeOverlayService::class.java).apply {
-                    action = EdgeOverlayService.ACTION_OPEN_DRAWER
-                }
-                ContextCompat.startForegroundService(this@MainActivity, intent)
+                ContextCompat.startForegroundService(
+                    this@MainActivity,
+                    Intent(this@MainActivity, EdgeOverlayService::class.java).apply { action = EdgeOverlayService.ACTION_OPEN_DRAWER }
+                )
             }
         }
 
@@ -150,13 +130,14 @@ class MainActivity : AppCompatActivity() {
         mainLayout.addView(btnSplitSupport)
         mainLayout.addView(btnTest)
         cardMain.addView(mainLayout)
+        container.addView(cardMain)
 
         // --- CARD 2: TEMA ONE UI ---
         val cardTheme = createCard(cardBg, dp(16))
         val themeLayout = createCardInner(dp(18))
         themeLayout.addView(createSectionHeader("Aspetto & Tema One UI", accent, dp(10)))
 
-        val themeModeLabel = TextView(this).apply {
+        themeLayout.addView(TextView(this).apply {
             text = when (prefs.themeMode) {
                 1 -> "Modalità tema: Giorno"
                 2 -> "Modalità tema: Notte"
@@ -165,16 +146,14 @@ class MainActivity : AppCompatActivity() {
             setTextColor(textPrimary)
             textSize = 14.5f
             setPadding(0, 0, 0, dp(8))
-        }
-        themeLayout.addView(themeModeLabel)
+        })
 
         val themeButtonsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        val modes = listOf("Auto" to 0, "Giorno" to 1, "Notte" to 2)
-        modes.forEach { (label, modeVal) ->
-            val btn = MaterialButton(this).apply {
+        listOf("Auto" to 0, "Giorno" to 1, "Notte" to 2).forEach { (label, modeVal) ->
+            themeButtonsRow.addView(MaterialButton(this).apply {
                 text = label
                 textSize = 12.5f
                 val active = prefs.themeMode == modeVal
@@ -182,61 +161,53 @@ class MainActivity : AppCompatActivity() {
                     if (active) accent else (if (isNight) Color.parseColor("#252B3B") else Color.parseColor("#E6EAF2"))
                 )
                 setTextColor(if (active) Color.WHITE else textPrimary)
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                    marginEnd = dp(6)
-                }
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(6) }
                 setOnClickListener {
                     prefs.themeMode = modeVal
                     notifyServiceReload()
                     buildOneUIScreen()
                 }
-            }
-            themeButtonsRow.addView(btn)
+            })
         }
         themeLayout.addView(themeButtonsRow)
 
-        val accentLabel = TextView(this).apply {
+        themeLayout.addView(TextView(this).apply {
             text = "Colore accento"
             setTextColor(textPrimary)
             textSize = 14.5f
             setPadding(0, dp(14), 0, dp(8))
-        }
-        themeLayout.addView(accentLabel)
+        })
 
         val accentRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.START
         }
         OneUIAccent.entries.forEachIndexed { idx, item ->
-            val circle = View(this).apply {
+            accentRow.addView(View(this).apply {
                 val size = dp(32)
-                layoutParams = LinearLayout.LayoutParams(size, size).apply {
-                    marginEnd = dp(10)
-                }
+                layoutParams = LinearLayout.LayoutParams(size, size).apply { marginEnd = dp(10) }
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
                     setColor(item.colorInt)
-                    if (prefs.accentIndex == idx) {
-                        setStroke(dp(3), textPrimary)
-                    }
+                    if (prefs.accentIndex == idx) setStroke(dp(3), textPrimary)
                 }
                 setOnClickListener {
                     prefs.accentIndex = idx
                     notifyServiceReload()
                     buildOneUIScreen()
                 }
-            }
-            accentRow.addView(circle)
+            })
         }
         themeLayout.addView(accentRow)
         cardTheme.addView(themeLayout)
+        container.addView(cardTheme)
 
         // --- CARD 3: TRIGGER LATERALE & SPAZIATURE INDICE ---
         val cardTrigger = createCard(cardBg, dp(16))
         val triggerLayout = createCardInner(dp(18))
         triggerLayout.addView(createSectionHeader("Trigger Laterale & Spaziature Indice", accent, dp(10)))
 
-        val sideSwitch = MaterialSwitch(this).apply {
+        triggerLayout.addView(MaterialSwitch(this).apply {
             text = if (prefs.isRightSide) "Lato schermo: Destra" else "Lato schermo: Sinistra"
             setTextColor(textPrimary)
             isChecked = prefs.isRightSide
@@ -245,9 +216,9 @@ class MainActivity : AppCompatActivity() {
                 text = if (isRight) "Lato schermo: Destra" else "Lato schermo: Sinistra"
                 notifyServiceReload()
             }
-        }
+        })
 
-        val triggerColorSwitch = MaterialSwitch(this).apply {
+        triggerLayout.addView(MaterialSwitch(this).apply {
             text = if (prefs.isTriggerTextBlack) "Colore lettere trigger: Nero" else "Colore lettere trigger: Bianco"
             setTextColor(textPrimary)
             setPadding(0, dp(6), 0, 0)
@@ -257,9 +228,9 @@ class MainActivity : AppCompatActivity() {
                 text = if (isBlack) "Colore lettere trigger: Nero" else "Colore lettere trigger: Bianco"
                 notifyServiceReload()
             }
-        }
+        })
 
-        val hideTriggerSwitch = MaterialSwitch(this).apply {
+        triggerLayout.addView(MaterialSwitch(this).apply {
             text = "Nascondi lettere trigger (solo scorrimento invisibile)"
             setTextColor(textPrimary)
             setPadding(0, dp(6), 0, 0)
@@ -268,322 +239,69 @@ class MainActivity : AppCompatActivity() {
                 prefs.isTriggerHidden = hidden
                 notifyServiceReload()
             }
-        }
+        })
 
-        triggerLayout.addView(sideSwitch)
-        triggerLayout.addView(triggerColorSwitch)
-        triggerLayout.addView(hideTriggerSwitch)
-
-        addSlider(
-            parent = triggerLayout,
-            titlePrefix = "Spaziatura verticale lettere A–Z",
-            unit = " dp",
-            min = 0,
-            max = 14,
-            step = 1,
-            initial = prefs.letterSpacingExtraDp,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.letterSpacingExtraDp = it },
-            onStop = { notifyServiceReload() }
-        )
-
-        addSlider(
-            parent = triggerLayout,
-            titlePrefix = "Spaziatura verticale pallini colore",
-            unit = " dp",
-            min = 0,
-            max = 18,
-            step = 1,
-            initial = prefs.colorDotSpacingExtraDp,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.colorDotSpacingExtraDp = it },
-            onStop = { notifyServiceReload() }
-        )
-
-        addSlider(
-            parent = triggerLayout,
-            titlePrefix = "Altezza base indice",
-            unit = "%",
-            min = 30,
-            max = 90,
-            step = 1,
-            initial = prefs.barHeightPercent,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.barHeightPercent = it },
-            onStop = { notifyServiceReload() }
-        )
-
-        addSlider(
-            parent = triggerLayout,
-            titlePrefix = "Posizione verticale (Alto ↔ In fondo)",
-            unit = "%",
-            min = 0,
-            max = 100,
-            step = 1,
-            initial = prefs.verticalPositionPercent,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.verticalPositionPercent = it },
-            onStop = { notifyServiceReload() }
-        )
-
-        addSlider(
-            parent = triggerLayout,
-            titlePrefix = "Larghezza area tocco bordo",
-            unit = " dp",
-            min = 18,
-            max = 46,
-            step = 1,
-            initial = prefs.triggerWidthDp,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.triggerWidthDp = it },
-            onStop = { notifyServiceReload() }
-        )
-
-        addSlider(
-            parent = triggerLayout,
-            titlePrefix = "Opacità lettere trigger",
-            unit = "%",
-            min = 0,
-            max = 100,
-            step = 1,
-            initial = prefs.triggerAlphaPercent,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.triggerAlphaPercent = it },
-            onStop = { notifyServiceReload() }
-        )
+        addSlider(triggerLayout, "Spaziatura verticale lettere A–Z", " dp", 0, 14, 1, prefs.letterSpacingExtraDp, textPrimary, accent, dp(12), { prefs.letterSpacingExtraDp = it }, { notifyServiceReload() })
+        addSlider(triggerLayout, "Spaziatura verticale pallini colore", " dp", 0, 18, 1, prefs.colorDotSpacingExtraDp, textPrimary, accent, dp(12), { prefs.colorDotSpacingExtraDp = it }, { notifyServiceReload() })
+        addSlider(triggerLayout, "Altezza base indice", "%", 30, 90, 1, prefs.barHeightPercent, textPrimary, accent, dp(12), { prefs.barHeightPercent = it }, { notifyServiceReload() })
+        addSlider(triggerLayout, "Posizione verticale (Alto ↔ In fondo)", "%", 0, 100, 1, prefs.verticalPositionPercent, textPrimary, accent, dp(12), { prefs.verticalPositionPercent = it }, { notifyServiceReload() })
+        addSlider(triggerLayout, "Larghezza area tocco bordo", " dp", 18, 46, 1, prefs.triggerWidthDp, textPrimary, accent, dp(12), { prefs.triggerWidthDp = it }, { notifyServiceReload() })
+        addSlider(triggerLayout, "Opacità lettere trigger", "%", 0, 100, 1, prefs.triggerAlphaPercent, textPrimary, accent, dp(12), { prefs.triggerAlphaPercent = it }, { notifyServiceReload() })
 
         cardTrigger.addView(triggerLayout)
+        container.addView(cardTrigger)
 
-        // --- CARD 4: SFONDO SFUMATO, BLUR, APTICO & ANIMAZIONI ---
+        // --- CARD 4: SFONDO SFUMATO, ONDA COLORE & APTICO ---
         val cardVisual = createCard(cardBg, dp(16))
         val visualLayout = createCardInner(dp(18))
-        visualLayout.addView(createSectionHeader("Sfondo Sfumato, Blur, Aptico & Animazioni", accent, dp(10)))
+        visualLayout.addView(createSectionHeader("Sfondo Sfumato, Onda Colore & Aptico", accent, dp(10)))
 
-        addSlider(
-            parent = visualLayout,
-            titlePrefix = "Opacità sfondo lato app (molto opaco)",
-            unit = "%",
-            min = 0,
-            max = 100,
-            step = 1,
-            initial = prefs.panelBgAlphaPercent,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(8),
-            onChanged = { prefs.panelBgAlphaPercent = it },
-            onStop = {}
-        )
-
-        addSlider(
-            parent = visualLayout,
-            titlePrefix = "Opacità sfondo lato opposto (sfumato)",
-            unit = "%",
-            min = 0,
-            max = 100,
-            step = 1,
-            initial = prefs.panelBgOppositeAlphaPercent,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.panelBgOppositeAlphaPercent = it },
-            onStop = {}
-        )
-
-        addSlider(
-            parent = visualLayout,
-            titlePrefix = "Opacità barra alfabetica pannello",
-            unit = "%",
-            min = 0,
-            max = 100,
-            step = 1,
-            initial = prefs.indexBarAlphaPercent,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.indexBarAlphaPercent = it },
-            onStop = {}
-        )
-
-        addSlider(
-            parent = visualLayout,
-            titlePrefix = "Sfocatura sfondo (Blur)",
-            unit = "",
-            min = 0,
-            max = 120,
-            step = 1,
-            initial = prefs.blurRadius,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.blurRadius = it },
-            onStop = {}
-        )
-
-        addSlider(
-            parent = visualLayout,
-            titlePrefix = "Potenza feedback aptico",
-            unit = "%",
-            min = 0,
-            max = 100,
-            step = 5,
-            initial = prefs.hapticStrengthPercent,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.hapticStrengthPercent = it },
-            onStop = {
-                HapticHelper.trigger(this, prefs, HapticHelper.PulseType.TICK)
-            }
-        )
-
-        addSlider(
-            parent = visualLayout,
-            titlePrefix = "Forza animazione onda (stile Niagara)",
-            unit = "%",
-            min = 0,
-            max = 140,
-            step = 1,
-            initial = prefs.waveStrengthPercent,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.waveStrengthPercent = it },
-            onStop = {}
-        )
+        addSlider(visualLayout, "Opacità sfondo lato app (molto opaco)", "%", 0, 100, 1, prefs.panelBgAlphaPercent, textPrimary, accent, dp(8), { prefs.panelBgAlphaPercent = it }, {})
+        addSlider(visualLayout, "Opacità sfondo lato opposto (sfumato)", "%", 0, 100, 1, prefs.panelBgOppositeAlphaPercent, textPrimary, accent, dp(12), { prefs.panelBgOppositeAlphaPercent = it }, {})
+        addSlider(visualLayout, "Opacità barra alfabetica pannello", "%", 0, 100, 1, prefs.indexBarAlphaPercent, textPrimary, accent, dp(12), { prefs.indexBarAlphaPercent = it }, {})
+        addSlider(visualLayout, "Forza impulso onda colore", "%", 0, 100, 5, prefs.colorWaveStrengthPercent, textPrimary, accent, dp(12), { prefs.colorWaveStrengthPercent = it }, {})
+        addSlider(visualLayout, "Potenza feedback aptico", "%", 0, 100, 5, prefs.hapticStrengthPercent, textPrimary, accent, dp(12), { prefs.hapticStrengthPercent = it }, {
+            HapticHelper.trigger(this, prefs, HapticHelper.PulseType.TICK)
+        })
+        addSlider(visualLayout, "Forza animazione onda (stile Niagara)", "%", 0, 140, 1, prefs.waveStrengthPercent, textPrimary, accent, dp(12), { prefs.waveStrengthPercent = it }, {})
 
         cardVisual.addView(visualLayout)
+        container.addView(cardVisual)
 
-        // --- CARD 5: DIMENSIONI, DIREZIONE & DISTANZE APP ---
+        // --- CARD 5: DIMENSIONI, SCORRIMENTO CONTINUO & DISTANZE APP ---
         val cardSpacing = createCard(cardBg, dp(16))
         val spacingLayout = createCardInner(dp(18))
-        spacingLayout.addView(createSectionHeader("Dimensioni, Direzione & Distanze App", accent, dp(10)))
+        spacingLayout.addView(createSectionHeader("Elenco App, Scorrimento Continuo & Distanze", accent, dp(10)))
 
-        val directionSwitch = MaterialSwitch(this).apply {
-            text = if (prefs.isAppsBottomToTop) {
-                "Ordine app: Dal basso verso l'alto (mano piccola)"
-            } else {
-                "Ordine app: Dall'alto verso il basso"
-            }
+        spacingLayout.addView(MaterialSwitch(this).apply {
+            text = if (prefs.isAppsBottomToTop) "Ordine app: Dal basso verso l'alto (mano piccola)" else "Ordine app: Dall'alto verso il basso"
             setTextColor(textPrimary)
             isChecked = prefs.isAppsBottomToTop
             setOnCheckedChangeListener { _, bottomUp ->
                 prefs.isAppsBottomToTop = bottomUp
-                text = if (bottomUp) {
-                    "Ordine app: Dal basso verso l'alto (mano piccola)"
-                } else {
-                    "Ordine app: Dall'alto verso il basso"
-                }
+                text = if (bottomUp) "Ordine app: Dal basso verso l'alto (mano piccola)" else "Ordine app: Dall'alto verso il basso"
             }
-        }
-        spacingLayout.addView(directionSwitch)
+        })
 
-        val labelsSwitch = MaterialSwitch(this).apply {
+        spacingLayout.addView(MaterialSwitch(this).apply {
             text = "Mostra etichette nomi app"
             setTextColor(textPrimary)
             setPadding(0, dp(6), 0, 0)
             isChecked = prefs.showAppLabels
-            setOnCheckedChangeListener { _, show ->
-                prefs.showAppLabels = show
-            }
-        }
-        spacingLayout.addView(labelsSwitch)
+            setOnCheckedChangeListener { _, show -> prefs.showAppLabels = show }
+        })
 
-        addSlider(
-            parent = spacingLayout,
-            titlePrefix = "Numero app recenti (sotto la Z)",
-            unit = " app",
-            min = 10,
-            max = 100,
-            step = 10,
-            initial = prefs.recentCount,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.recentCount = it },
-            onStop = {}
-        )
-
-        addSlider(
-            parent = spacingLayout,
-            titlePrefix = "Scala generale pannello e icone",
-            unit = "%",
-            min = 70,
-            max = 130,
-            step = 1,
-            initial = prefs.panelScalePercent,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.panelScalePercent = it },
-            onStop = { notifyServiceReload() }
-        )
-
-        addSlider(
-            parent = spacingLayout,
-            titlePrefix = "Distanza verticale tra le app",
-            unit = " dp",
-            min = 2,
-            max = 32,
-            step = 1,
-            initial = prefs.appSpacingDp,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.appSpacingDp = it },
-            onStop = {}
-        )
-
-        addSlider(
-            parent = spacingLayout,
-            titlePrefix = "Distanza etichetta dall'icona",
-            unit = " dp",
-            min = 0,
-            max = 18,
-            step = 1,
-            initial = prefs.labelDistanceDp,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.labelDistanceDp = it },
-            onStop = {}
-        )
-
-        addSlider(
-            parent = spacingLayout,
-            titlePrefix = "Distanza delle app dall'indice A–Z",
-            unit = " dp",
-            min = 4,
-            max = 44,
-            step = 1,
-            initial = prefs.appsFromIndexDp,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(12),
-            onChanged = { prefs.appsFromIndexDp = it },
-            onStop = {}
-        )
+        addSlider(spacingLayout, "Zona attivazione scroll (distanza bordo alto/basso)", " dp", 20, 150, 5, prefs.autoScrollEdgeZoneDp, textPrimary, accent, dp(12), { prefs.autoScrollEdgeZoneDp = it }, {})
+        addSlider(spacingLayout, "Velocità scorrimento continuo app", " app/s", 1, 15, 1, prefs.autoScrollAppsPerSec, textPrimary, accent, dp(12), { prefs.autoScrollAppsPerSec = it }, {})
+        addSlider(spacingLayout, "Numero app recenti (sotto la Z)", " app", 10, 100, 10, prefs.recentCount, textPrimary, accent, dp(12), { prefs.recentCount = it }, {})
+        addSlider(spacingLayout, "Scala generale pannello e icone", "%", 70, 130, 1, prefs.panelScalePercent, textPrimary, accent, dp(12), { prefs.panelScalePercent = it }, { notifyServiceReload() })
+        addSlider(spacingLayout, "Distanza verticale tra le app", " dp", 2, 32, 1, prefs.appSpacingDp, textPrimary, accent, dp(12), { prefs.appSpacingDp = it }, {})
+        addSlider(spacingLayout, "Distanza etichetta dall'icona", " dp", 0, 18, 1, prefs.labelDistanceDp, textPrimary, accent, dp(12), { prefs.labelDistanceDp = it }, {})
+        addSlider(spacingLayout, "Distanza delle app dall'indice A–Z", " dp", 4, 44, 1, prefs.appsFromIndexDp, textPrimary, accent, dp(12), { prefs.appsFromIndexDp = it }, {})
 
         cardSpacing.addView(spacingLayout)
-
-        container.addView(title)
-        container.addView(subtitle)
-        container.addView(cardMain)
-        container.addView(cardTheme)
-        container.addView(cardTrigger)
-        container.addView(cardVisual)
         container.addView(cardSpacing)
+
         root.addView(container)
         setContentView(root)
     }
@@ -591,18 +309,9 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         val hasOverlay = Settings.canDrawOverlays(this)
-        btnPermission.text = if (hasOverlay) {
-            "1. Permesso 'Mostra sopra altre app' OK ✓"
-        } else {
-            "1. Permesso 'Mostra sopra altre app'"
-        }
-
+        btnPermission.text = if (hasOverlay) "1. Permesso 'Mostra sopra altre app' OK ✓" else "1. Permesso 'Mostra sopra altre app'"
         val hasSplit = EdgeAccessibilityService.instance != null
-        btnSplitSupport.text = if (hasSplit) {
-            "3. Schermo Diviso (Metà sopra/sotto) OK ✓"
-        } else {
-            "3. Abilita Schermo Diviso (Metà sopra/sotto)"
-        }
+        btnSplitSupport.text = if (hasSplit) "3. Schermo Diviso (Metà sopra/sotto) OK ✓" else "3. Abilita Schermo Diviso (Metà sopra/sotto)"
 
         if (hasOverlay && prefs.isServiceEnabled) {
             ContextCompat.startForegroundService(this, Intent(this, EdgeOverlayService::class.java))
@@ -611,42 +320,33 @@ class MainActivity : AppCompatActivity() {
 
     private fun notifyServiceReload() {
         if (prefs.isServiceEnabled && Settings.canDrawOverlays(this)) {
-            val intent = Intent(this, EdgeOverlayService::class.java).apply {
-                action = EdgeOverlayService.ACTION_RELOAD_CONFIG
-            }
-            ContextCompat.startForegroundService(this, intent)
+            ContextCompat.startForegroundService(
+                this,
+                Intent(this, EdgeOverlayService::class.java).apply { action = EdgeOverlayService.ACTION_RELOAD_CONFIG }
+            )
         }
     }
 
-    private fun createCard(bgColor: Int, marginBottomPx: Int): MaterialCardView {
-        return MaterialCardView(this).apply {
-            setCardBackgroundColor(bgColor)
-            radius = 52f
-            cardElevation = 0f
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = marginBottomPx
-            }
+    private fun createCard(bgColor: Int, marginBottomPx: Int) = MaterialCardView(this).apply {
+        setCardBackgroundColor(bgColor)
+        radius = 52f
+        cardElevation = 0f
+        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = marginBottomPx
         }
     }
 
-    private fun createCardInner(padPx: Int): LinearLayout {
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(padPx, padPx, padPx, padPx)
-        }
+    private fun createCardInner(padPx: Int) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(padPx, padPx, padPx, padPx)
     }
 
-    private fun createSectionHeader(textStr: String, color: Int, bottomPad: Int): TextView {
-        return TextView(this).apply {
-            text = textStr
-            textSize = 16.5f
-            setTextColor(color)
-            setTypeface(null, Typeface.BOLD)
-            setPadding(0, 0, 0, bottomPad)
-        }
+    private fun createSectionHeader(textStr: String, color: Int, bottomPad: Int) = TextView(this).apply {
+        text = textStr
+        textSize = 16.5f
+        setTextColor(color)
+        setTypeface(null, Typeface.BOLD)
+        setPadding(0, 0, 0, bottomPad)
     }
 
     private fun addSlider(
@@ -682,9 +382,7 @@ class MainActivity : AppCompatActivity() {
                     onChanged(realVal)
                 }
                 override fun onStartTrackingTouch(sb: SeekBar?) {}
-                override fun onStopTrackingTouch(sb: SeekBar?) {
-                    onStop()
-                }
+                override fun onStopTrackingTouch(sb: SeekBar?) = onStop()
             })
         }
         parent.addView(label)
