@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.*
 import android.os.Handler
 import android.os.Looper
+import android.util.TypedValue
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
@@ -251,9 +252,12 @@ class EdgeDrawerView(
     private val tempRect = RectF()
 
     private val density = resources.displayMetrics.density
-    private val scaledDensity = resources.displayMetrics.scaledDensity
     private fun dp(value: Float): Float = value * density
-    private fun sp(value: Float): Float = value * scaledDensity
+    private fun sp(value: Float): Float = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_SP,
+        value,
+        resources.displayMetrics
+    )
 
     private val dimBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val deepShadowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -465,7 +469,7 @@ class EdgeDrawerView(
         deepShadowPaint.shader = if (prefs.isRightSide) {
             LinearGradient(w - shadowW, 0f, w, 0f, intArrayOf(clearBlack, midBlack, deepBlack), floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
         } else {
-            LinearGradient(0f, 0f, shadowWidth = shadowW, 0f, intArrayOf(deepBlack, midBlack, clearBlack), floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
+            LinearGradient(0f, 0f, shadowW, 0f, intArrayOf(deepBlack, midBlack, clearBlack), floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
         }
     }
 
