@@ -31,9 +31,9 @@ enum class AppColorFilter(val label: String, val swatchColor: Int) {
 
 enum class LaunchWindowMode(val title: String) {
     NORMAL("Normale"),
+    SPLIT_TOP("Schermo diviso su"),
     POPUP("Pop-up"),
-    SPLIT_TOP("Metà sopra"),
-    SPLIT_BOTTOM("Metà sotto")
+    SPLIT_BOTTOM("Schermo diviso giù")
 }
 
 enum class OneUIAccent(val label: String, val colorInt: Int) {
@@ -56,11 +56,11 @@ data class AppEntry(
 )
 
 object HapticHelper {
-    enum class PulseType {
-        TICK,
-        APP_HOVER,
-        LONG_HOLD,
-        CONFIRM
+    enum class PulseType(val baseMs: Long, val baseAmp: Int) {
+        TICK(10L, 145),
+        APP_HOVER(14L, 175),
+        LONG_HOLD(28L, 245),
+        CONFIRM(20L, 210)
     }
 
     fun trigger(context: Context, prefs: PrefsManager, type: PulseType) {
@@ -68,42 +68,26 @@ object HapticHelper {
         if (strength <= 0) return
 
         val vibrator: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
-            vm?.defaultVibrator
+            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)?.defaultVibrator
         } else {
             @Suppress("DEPRECATION")
             context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
         }
-
         if (vibrator == null || !vibrator.hasVibrator()) return
 
-        val baseDurationMs = when (type) {
-            PulseType.TICK -> 10L
-            PulseType.APP_HOVER -> 14L
-            PulseType.LONG_HOLD -> 28L
-            PulseType.CONFIRM -> 20L
-        }
-
-        val baseAmplitude = when (type) {
-            PulseType.TICK -> 145
-            PulseType.APP_HOVER -> 175
-            PulseType.LONG_HOLD -> 240
-            PulseType.CONFIRM -> 210
-        }
-
         val ratio = strength / 100f
-        val scaledAmplitude = (baseAmplitude * ratio).toInt().coerceIn(1, 255)
-        val scaledDuration = (baseDurationMs * (0.55f + 0.45f * ratio)).toLong().coerceAtLeast(4L)
+        val amp = (type.baseAmp * ratio).toInt().coerceIn(1, 255)
+        val dur = (type.baseMs * (0.55f + 0.45f * ratio)).toLong().coerceAtLeast(4L)
 
         try {
             if (vibrator.hasAmplitudeControl()) {
-                vibrator.vibrate(
-                    VibrationEffect.createOneShot(scaledDuration, scaledAmplitude)
-                )
+                vibrator.vibrate(VibrationEffect.createOneShot(dur, amp))
             } else {
-                val fallbackDuration = (baseDurationMs * ratio * 1.4f).toLong().coerceIn(3L, 45L)
                 vibrator.vibrate(
-                    VibrationEffect.createOneShot(fallbackDuration, VibrationEffect.DEFAULT_AMPLITUDE)
+                    VibrationEffect.createOneShot(
+                        (type.baseMs * ratio * 1.4f).toLong().coerceIn(3L, 45L),
+                        VibrationEffect.DEFAULT_AMPLITUDE
+                    )
                 )
             }
         } catch (_: Exception) {
@@ -112,14 +96,13 @@ object HapticHelper {
 }
 
 object IconColorAnalyzer {
-
     fun normalizeFirstLetter(label: String): Char {
         val trimmed = label.trim()
         if (trimmed.isEmpty()) return '#'
-        val normalized = Normalizer.normalize(trimmed.substring(0, 1), Normalizer.Form.NFD)
+        val ch = Normalizer.normalize(trimmed.substring(0, 1), Normalizer.Form.NFD)
             .replace("\\p{InCombiningDiacriticalMarks}+".toRegex(), "")
             .uppercase()
-        val ch = normalized.firstOrNull() ?: '#'
+            .firstOrNull() ?: '#'
         return if (ch in 'A'..'Z') ch else '#'
     }
 
@@ -143,20 +126,15 @@ object IconColorAnalyzer {
             for (y in 4 until 28) {
                 val pixel = scaled.getPixel(x, y)
                 if (Color.alpha(pixel) < 140) continue
-
                 Color.colorToHSV(pixel, hsv)
-                val hue = hsv[0]
-                val sat = hsv[1]
-                val value = hsv[2]
-
-                if (sat < 0.22f || value < 0.18f) {
+                if (hsv[1] < 0.22f || hsv[2] < 0.18f) {
                     counts[AppColorFilter.MONO.ordinal] += 1
                 } else {
                     val idx = when {
-                        hue < 24f || hue >= 338f -> AppColorFilter.RED.ordinal
-                        hue < 68f -> AppColorFilter.YELLOW.ordinal
-                        hue < 168f -> AppColorFilter.GREEN.ordinal
-                        hue < 258f -> AppColorFilter.BLUE.ordinal
+                        hsv[0] < 24f || hsv[0] >= 338f -> AppColorFilter.RED.ordinal
+                        hsv[0] < 68f -> AppColorFilter.YELLOW.ordinal
+                        hsv[0] < 168f -> AppColorFilter.GREEN.ordinal
+                        hsv[0] < 258f -> AppColorFilter.BLUE.ordinal
                         else -> AppColorFilter.PURPLE.ordinal
                     }
                     counts[idx] += 3
@@ -178,11 +156,7 @@ object IconColorAnalyzer {
 }
 
 class AppRepository(private val context: Context) {
-
     private val executor = Executors.newSingleThreadExecutor()
-
-    @Volatile
-    private var allApps: List<AppEntry> = emptyList()
 
     @Volatile
     private var letterCache: Map<Pair<Char, AppColorFilter>, List<AppEntry>> = emptyMap()
@@ -191,9 +165,7 @@ class AppRepository(private val context: Context) {
     private var recentCache: Map<AppColorFilter, List<AppEntry>> = emptyMap()
 
     private val packageReceiver = object : BroadcastReceiver() {
-        override fun onReceive(ctx: Context?, intent: Intent?) {
-            reloadAppsAsync()
-        }
+        override fun onReceive(ctx: Context?, intent: Intent?) = reloadAppsAsync()
     }
 
     fun startListening() {
@@ -203,12 +175,7 @@ class AppRepository(private val context: Context) {
             addAction(Intent.ACTION_PACKAGE_CHANGED)
             addDataScheme("package")
         }
-        ContextCompat.registerReceiver(
-            context,
-            packageReceiver,
-            filter,
-            ContextCompat.RECEIVER_EXPORTED
-        )
+        ContextCompat.registerReceiver(context, packageReceiver, filter, ContextCompat.RECEIVER_EXPORTED)
         reloadAppsAsync()
     }
 
@@ -219,12 +186,10 @@ class AppRepository(private val context: Context) {
         }
     }
 
-    fun reloadAppsAsync(onComplete: (() -> Unit)? = null) {
+    fun reloadAppsAsync() {
         executor.execute {
             val pm = context.packageManager
-            val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
-                addCategory(Intent.CATEGORY_LAUNCHER)
-            }
+            val mainIntent = Intent(Intent.ACTION_MAIN, null).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
             val resolved = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 pm.queryIntentActivities(mainIntent, PackageManager.ResolveInfoFlags.of(0L))
             } else {
@@ -232,22 +197,17 @@ class AppRepository(private val context: Context) {
                 pm.queryIntentActivities(mainIntent, 0)
             }
 
-            val density = context.resources.displayMetrics.density
-            val iconSizePx = (58 * density).toInt().coerceAtLeast(76)
+            val iconSizePx = (58 * context.resources.displayMetrics.density).toInt().coerceAtLeast(76)
             val myPkg = context.packageName
 
-            val loaded = resolved
-                .asSequence()
+            val loaded = resolved.asSequence()
                 .filter { it.activityInfo?.packageName != myPkg }
                 .distinctBy { it.activityInfo.packageName }
                 .mapNotNull { info ->
                     try {
                         val pkg = info.activityInfo.packageName
                         val label = info.loadLabel(pm).toString()
-                        val shortLabel = if (label.length > 11) label.take(10) + "…" else label
-                        val drawable = info.loadIcon(pm)
-                        val bitmap = IconColorAnalyzer.drawableToBitmap(drawable, iconSizePx)
-                        val colorCat = IconColorAnalyzer.detectDominantColor(bitmap)
+                        val bitmap = IconColorAnalyzer.drawableToBitmap(info.loadIcon(pm), iconSizePx)
                         val installTime = try {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                 pm.getPackageInfo(pkg, PackageManager.PackageInfoFlags.of(0L)).firstInstallTime
@@ -258,15 +218,14 @@ class AppRepository(private val context: Context) {
                         } catch (_: Exception) {
                             0L
                         }
-
                         AppEntry(
                             label = label,
-                            shortLabel = shortLabel,
+                            shortLabel = if (label.length > 11) label.take(10) + "…" else label,
                             packageName = pkg,
                             iconBitmap = bitmap,
                             firstLetter = IconColorAnalyzer.normalizeFirstLetter(label),
                             installTime = installTime,
-                            colorCategory = colorCat
+                            colorCategory = IconColorAnalyzer.detectDominantColor(bitmap)
                         )
                     } catch (_: Exception) {
                         null
@@ -280,40 +239,27 @@ class AppRepository(private val context: Context) {
             val sortedByRecent = loaded.sortedByDescending { it.installTime }
 
             for (color in AppColorFilter.entries) {
-                val filteredByColor = if (color == AppColorFilter.ALL) {
-                    loaded
-                } else {
-                    loaded.filter { it.colorCategory == color }
-                }
-                newRecentCache[color] = if (color == AppColorFilter.ALL) {
-                    sortedByRecent
-                } else {
-                    sortedByRecent.filter { it.colorCategory == color }
-                }
-                val grouped = filteredByColor.groupBy { it.firstLetter }
+                val filtered = if (color == AppColorFilter.ALL) loaded else loaded.filter { it.colorCategory == color }
+                newRecentCache[color] = if (color == AppColorFilter.ALL) sortedByRecent else sortedByRecent.filter { it.colorCategory == color }
+                val grouped = filtered.groupBy { it.firstLetter }
                 for (ch in 'A'..'Z') {
                     newLetterCache[ch to color] = grouped[ch] ?: emptyList()
                 }
             }
 
-            allApps = loaded
             letterCache = newLetterCache
             recentCache = newRecentCache
-            onComplete?.invoke()
         }
     }
 
-    fun getAppsForLetter(letter: Char, colorFilter: AppColorFilter): List<AppEntry> {
-        return letterCache[letter to colorFilter] ?: emptyList()
-    }
+    fun getAppsForLetter(letter: Char, colorFilter: AppColorFilter): List<AppEntry> =
+        letterCache[letter to colorFilter] ?: emptyList()
 
-    fun getRecentApps(limit: Int, colorFilter: AppColorFilter): List<AppEntry> {
-        return (recentCache[colorFilter] ?: emptyList()).take(limit)
-    }
+    fun getRecentApps(limit: Int, colorFilter: AppColorFilter): List<AppEntry> =
+        (recentCache[colorFilter] ?: emptyList()).take(limit)
 
-    fun hasAppsForLetter(letter: Char, colorFilter: AppColorFilter): Boolean {
-        return !(letterCache[letter to colorFilter].isNullOrEmpty())
-    }
+    fun hasAppsForLetter(letter: Char, colorFilter: AppColorFilter): Boolean =
+        !(letterCache[letter to colorFilter].isNullOrEmpty())
 }
 
 class PrefsManager(private val context: Context) {
@@ -335,20 +281,13 @@ class PrefsManager(private val context: Context) {
         get() = prefs.getInt("accent_index", 0)
         set(value) = prefs.edit().putInt("accent_index", value).apply()
 
-    fun getAccentColor(): Int {
-        val entries = OneUIAccent.entries
-        return entries[accentIndex.coerceIn(0, entries.lastIndex)].colorInt
-    }
+    fun getAccentColor(): Int =
+        OneUIAccent.entries[accentIndex.coerceIn(0, OneUIAccent.entries.lastIndex)].colorInt
 
-    fun isNightThemeActive(): Boolean {
-        return when (themeMode) {
-            1 -> false
-            2 -> true
-            else -> {
-                val uiMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
-                uiMode == Configuration.UI_MODE_NIGHT_YES
-            }
-        }
+    fun isNightThemeActive(): Boolean = when (themeMode) {
+        1 -> false
+        2 -> true
+        else -> (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
     }
 
     var isTriggerHidden: Boolean
@@ -368,14 +307,13 @@ class PrefsManager(private val context: Context) {
         set(value) = prefs.edit().putInt("vertical_position_percent", value).apply()
 
     var triggerWidthDp: Int
-        get() = prefs.getInt("trigger_width_dp", 26)
+        get() = prefs.getInt("trigger_width_dp", 24)
         set(value) = prefs.edit().putInt("trigger_width_dp", value).apply()
 
     var triggerAlphaPercent: Int
-        get() = prefs.getInt("trigger_alpha_percent", 55)
+        get() = prefs.getInt("trigger_alpha_percent", 60)
         set(value) = prefs.edit().putInt("trigger_alpha_percent", value).apply()
 
-    // Due slider separati per spaziatura lettere alfabeto e spaziatura pallini colore
     var letterSpacingExtraDp: Int
         get() = prefs.getInt("letter_spacing_extra_dp", 2).coerceIn(0, 14)
         set(value) = prefs.edit().putInt("letter_spacing_extra_dp", value.coerceIn(0, 14)).apply()
@@ -384,7 +322,6 @@ class PrefsManager(private val context: Context) {
         get() = prefs.getInt("color_dot_spacing_extra_dp", 4).coerceIn(0, 18)
         set(value) = prefs.edit().putInt("color_dot_spacing_extra_dp", value.coerceIn(0, 18)).apply()
 
-    // Direzione lista app: true = dal basso verso l'alto (mano piccola), false = dall'alto verso il basso
     var isAppsBottomToTop: Boolean
         get() = prefs.getBoolean("apps_bottom_to_top", true)
         set(value) = prefs.edit().putBoolean("apps_bottom_to_top", value).apply()
@@ -405,9 +342,20 @@ class PrefsManager(private val context: Context) {
         get() = prefs.getInt("index_bar_alpha_percent", 80)
         set(value) = prefs.edit().putInt("index_bar_alpha_percent", value).apply()
 
-    var blurRadius: Int
-        get() = prefs.getInt("blur_radius", 60)
-        set(value) = prefs.edit().putInt("blur_radius", value).apply()
+    // Forza impulso onda colore dal lato indice al lato opposto (0% - 100%)
+    var colorWaveStrengthPercent: Int
+        get() = prefs.getInt("color_wave_strength_percent", 65).coerceIn(0, 100)
+        set(value) = prefs.edit().putInt("color_wave_strength_percent", value.coerceIn(0, 100)).apply()
+
+    // Distanza dal bordo alto/basso dello schermo per attivare lo scorrimento continuo app (dp)
+    var autoScrollEdgeZoneDp: Int
+        get() = prefs.getInt("auto_scroll_edge_zone_dp", 64).coerceIn(20, 150)
+        set(value) = prefs.edit().putInt("auto_scroll_edge_zone_dp", value.coerceIn(20, 150)).apply()
+
+    // Velocità scorrimento continuo in app al secondo (1 - 15 app/s)
+    var autoScrollAppsPerSec: Int
+        get() = prefs.getInt("auto_scroll_apps_per_sec", 5).coerceIn(1, 15)
+        set(value) = prefs.edit().putInt("auto_scroll_apps_per_sec", value.coerceIn(1, 15)).apply()
 
     var appSpacingDp: Int
         get() = prefs.getInt("app_spacing_dp", 12)
