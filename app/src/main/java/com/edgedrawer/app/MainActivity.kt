@@ -231,10 +231,10 @@ class MainActivity : AppCompatActivity() {
         themeLayout.addView(accentRow)
         cardTheme.addView(themeLayout)
 
-        // --- CARD 3: TRIGGER LATERALE & POSIZIONE VERTICALE ---
+        // --- CARD 3: TRIGGER LATERALE & SPAZIATURE INDICE ---
         val cardTrigger = createCard(cardBg, dp(16))
         val triggerLayout = createCardInner(dp(18))
-        triggerLayout.addView(createSectionHeader("Trigger Laterale & Posizionamento", accent, dp(10)))
+        triggerLayout.addView(createSectionHeader("Trigger Laterale & Spaziature Indice", accent, dp(10)))
 
         val sideSwitch = MaterialSwitch(this).apply {
             text = if (prefs.isRightSide) "Lato schermo: Destra" else "Lato schermo: Sinistra"
@@ -276,7 +276,37 @@ class MainActivity : AppCompatActivity() {
 
         addSlider(
             parent = triggerLayout,
-            titlePrefix = "Altezza indice (Trigger e Pannello)",
+            titlePrefix = "Spaziatura verticale lettere A–Z",
+            unit = " dp",
+            min = 0,
+            max = 14,
+            step = 1,
+            initial = prefs.letterSpacingExtraDp,
+            textColor = textPrimary,
+            accentColor = accent,
+            dp12 = dp(12),
+            onChanged = { prefs.letterSpacingExtraDp = it },
+            onStop = { notifyServiceReload() }
+        )
+
+        addSlider(
+            parent = triggerLayout,
+            titlePrefix = "Spaziatura verticale pallini colore",
+            unit = " dp",
+            min = 0,
+            max = 18,
+            step = 1,
+            initial = prefs.colorDotSpacingExtraDp,
+            textColor = textPrimary,
+            accentColor = accent,
+            dp12 = dp(12),
+            onChanged = { prefs.colorDotSpacingExtraDp = it },
+            onStop = { notifyServiceReload() }
+        )
+
+        addSlider(
+            parent = triggerLayout,
+            titlePrefix = "Altezza base indice",
             unit = "%",
             min = 30,
             max = 90,
@@ -336,7 +366,7 @@ class MainActivity : AppCompatActivity() {
 
         cardTrigger.addView(triggerLayout)
 
-        // --- CARD 4: TRASPARENZA SFUMATA, BLUR, APTICO & ANIMAZIONI ---
+        // --- CARD 4: SFONDO SFUMATO, BLUR, APTICO & ANIMAZIONI ---
         val cardVisual = createCard(cardBg, dp(16))
         val visualLayout = createCardInner(dp(18))
         visualLayout.addView(createSectionHeader("Sfondo Sfumato, Blur, Aptico & Animazioni", accent, dp(10)))
@@ -435,14 +465,34 @@ class MainActivity : AppCompatActivity() {
 
         cardVisual.addView(visualLayout)
 
-        // --- CARD 5: DISTANZE & DIMENSIONI APP ---
+        // --- CARD 5: DIMENSIONI, DIREZIONE & DISTANZE APP ---
         val cardSpacing = createCard(cardBg, dp(16))
         val spacingLayout = createCardInner(dp(18))
-        spacingLayout.addView(createSectionHeader("Dimensioni, Distanze & App Recenti", accent, dp(10)))
+        spacingLayout.addView(createSectionHeader("Dimensioni, Direzione & Distanze App", accent, dp(10)))
+
+        val directionSwitch = MaterialSwitch(this).apply {
+            text = if (prefs.isAppsBottomToTop) {
+                "Ordine app: Dal basso verso l'alto (mano piccola)"
+            } else {
+                "Ordine app: Dall'alto verso il basso"
+            }
+            setTextColor(textPrimary)
+            isChecked = prefs.isAppsBottomToTop
+            setOnCheckedChangeListener { _, bottomUp ->
+                prefs.isAppsBottomToTop = bottomUp
+                text = if (bottomUp) {
+                    "Ordine app: Dal basso verso l'alto (mano piccola)"
+                } else {
+                    "Ordine app: Dall'alto verso il basso"
+                }
+            }
+        }
+        spacingLayout.addView(directionSwitch)
 
         val labelsSwitch = MaterialSwitch(this).apply {
             text = "Mostra etichette nomi app"
             setTextColor(textPrimary)
+            setPadding(0, dp(6), 0, 0)
             isChecked = prefs.showAppLabels
             setOnCheckedChangeListener { _, show ->
                 prefs.showAppLabels = show
