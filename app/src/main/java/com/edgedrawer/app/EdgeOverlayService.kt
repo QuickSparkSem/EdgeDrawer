@@ -67,7 +67,7 @@ class EdgeOverlayService : Service() {
         when (intent?.action) {
             ACTION_OPEN_DRAWER -> openDrawer(
                 fromContinuousSwipe = false,
-                initialSlot = 0,
+                initialSlot = EdgeIndexSlots.RECENT_SLOT_INDEX,
                 initialRawY = 300f
             )
             ACTION_RELOAD_CONFIG -> {
@@ -136,6 +136,7 @@ class EdgeOverlayService : Service() {
         val pad = 6f * density
         val letterStepH = (lettersHeightPx - pad * 2f) / EdgeIndexSlots.LETTERS.size
         val totalBarHeightPx = (pad * 2f + letterStepH * EdgeIndexSlots.TOTAL_SLOTS).toInt()
+        val colorsOffsetPx = (letterStepH * EdgeIndexSlots.COLORS.size).toInt()
 
         val topSafeMargin = (28f * density).toInt()
         val bottomSafeMargin = (16f * density).toInt()
@@ -155,7 +156,8 @@ class EdgeOverlayService : Service() {
         ).apply {
             gravity = (if (prefs.isRightSide) Gravity.END else Gravity.START) or Gravity.TOP
             x = (6f * density).toInt()
-            y = barTopY
+            // Allinea il trigger esattamente sotto i 7 pallini colore (sulle lettere A-Z e ↓)
+            y = barTopY + colorsOffsetPx
         }
 
         var downY = 0f
@@ -186,7 +188,6 @@ class EdgeOverlayService : Service() {
                             )
                         }
                     } else {
-                        // Continua a inoltrare ogni singolo movimento senza staccare il dito
                         drawerView?.handleExternalDrag(currentRawX, currentRawY, MotionEvent.ACTION_MOVE)
                     }
                     true
@@ -232,7 +233,6 @@ class EdgeOverlayService : Service() {
         if (isDrawerOpen) return
         isDrawerOpen = true
 
-        // Usa alpha = 0f invece di INVISIBLE così il flusso touch continuo non viene mai interrotto da Android
         triggerView?.alpha = 0f
 
         val overlay = EdgeDrawerView(
@@ -275,7 +275,6 @@ class EdgeOverlayService : Service() {
             windowManager.updateViewLayout(overlay, params)
         }
 
-        // Inizializza subito lo stato senza attendere il frame successivo
         overlay.prepareOpen(fromContinuousSwipe, initialSlot, initialRawY)
     }
 
