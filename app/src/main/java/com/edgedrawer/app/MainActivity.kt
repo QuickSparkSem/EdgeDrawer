@@ -336,29 +336,14 @@ class MainActivity : AppCompatActivity() {
 
         cardTrigger.addView(triggerLayout)
 
-        // --- CARD 4: TRASPARENZA, BLUR E ANIMAZIONE NIAGARA ---
+        // --- CARD 4: TRASPARENZA SFUMATA, BLUR, APTICO & ANIMAZIONI ---
         val cardVisual = createCard(cardBg, dp(16))
         val visualLayout = createCardInner(dp(18))
-        visualLayout.addView(createSectionHeader("Trasparenza, Blur & Animazioni", accent, dp(10)))
+        visualLayout.addView(createSectionHeader("Sfondo Sfumato, Blur, Aptico & Animazioni", accent, dp(10)))
 
         addSlider(
             parent = visualLayout,
-            titlePrefix = "Sfocatura sfondo (Blur)",
-            unit = "",
-            min = 0,
-            max = 120,
-            step = 1,
-            initial = prefs.blurRadius,
-            textColor = textPrimary,
-            accentColor = accent,
-            dp12 = dp(8),
-            onChanged = { prefs.blurRadius = it },
-            onStop = {}
-        )
-
-        addSlider(
-            parent = visualLayout,
-            titlePrefix = "Opacità sfondo pannello",
+            titlePrefix = "Opacità sfondo lato app (molto opaco)",
             unit = "%",
             min = 0,
             max = 100,
@@ -366,8 +351,23 @@ class MainActivity : AppCompatActivity() {
             initial = prefs.panelBgAlphaPercent,
             textColor = textPrimary,
             accentColor = accent,
-            dp12 = dp(12),
+            dp12 = dp(8),
             onChanged = { prefs.panelBgAlphaPercent = it },
+            onStop = {}
+        )
+
+        addSlider(
+            parent = visualLayout,
+            titlePrefix = "Opacità sfondo lato opposto (sfumato)",
+            unit = "%",
+            min = 0,
+            max = 100,
+            step = 1,
+            initial = prefs.panelBgOppositeAlphaPercent,
+            textColor = textPrimary,
+            accentColor = accent,
+            dp12 = dp(12),
+            onChanged = { prefs.panelBgOppositeAlphaPercent = it },
             onStop = {}
         )
 
@@ -384,6 +384,38 @@ class MainActivity : AppCompatActivity() {
             dp12 = dp(12),
             onChanged = { prefs.indexBarAlphaPercent = it },
             onStop = {}
+        )
+
+        addSlider(
+            parent = visualLayout,
+            titlePrefix = "Sfocatura sfondo (Blur)",
+            unit = "",
+            min = 0,
+            max = 120,
+            step = 1,
+            initial = prefs.blurRadius,
+            textColor = textPrimary,
+            accentColor = accent,
+            dp12 = dp(12),
+            onChanged = { prefs.blurRadius = it },
+            onStop = {}
+        )
+
+        addSlider(
+            parent = visualLayout,
+            titlePrefix = "Potenza feedback aptico",
+            unit = "%",
+            min = 0,
+            max = 100,
+            step = 5,
+            initial = prefs.hapticStrengthPercent,
+            textColor = textPrimary,
+            accentColor = accent,
+            dp12 = dp(12),
+            onChanged = { prefs.hapticStrengthPercent = it },
+            onStop = {
+                HapticHelper.trigger(this, prefs, HapticHelper.PulseType.TICK)
+            }
         )
 
         addSlider(
