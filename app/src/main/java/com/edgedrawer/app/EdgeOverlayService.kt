@@ -1,23 +1,29 @@
 package com.edgedrawer.app
 
+import android.accessibilityservice.AccessibilityService
+import android.app.ActivityOptions
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo
-import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
-import android.view.View
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import android.content.pm.ServiceInfo
 import kotlin.math.abs
 
 class EdgeOverlayService : Service() {
@@ -32,8 +38,9 @@ class EdgeOverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private lateinit var prefs: PrefsManager
     private lateinit var repository: AppRepository
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-    private var triggerView: View? = null
+    private var triggerView: EdgeTriggerView? = null
     private var drawerView: EdgeDrawerView? = null
     private var isDrawerOpen = false
 
@@ -57,7 +64,11 @@ class EdgeOverlayService : Service() {
         }
 
         when (intent?.action) {
-            ACTION_OPEN_DRAWER -> openDrawer(fromContinuousSwipe = false, initialY = 300f)
+            ACTION_OPEN_DRAWER -> openDrawer(
+                fromContinuousSwipe = false,
+                initialLetter = '★',
+                initialY = 300f
+            )
             ACTION_RELOAD_CONFIG -> {
                 removeTriggerHandle()
                 setupTriggerHandle()
@@ -65,6 +76,8 @@ class EdgeOverlayService : Service() {
             else -> {
                 if (triggerView == null) {
                     setupTriggerHandle()
+                } else {
+                    triggerView?.invalidate()
                 }
             }
         }
@@ -91,7 +104,7 @@ class EdgeOverlayService : Service() {
 
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("EdgeDrawer attivo")
-            .setContentText("Scorri dal bordo per aprire l'indice A-Z")
+            .setContentText("Scorri dall'indice laterale per aprire le app")
             .setSmallIcon(android.R.drawable.ic_menu_sort_alphabetically)
             .setContentIntent(openAppIntent)
             .setOngoing(true)
@@ -112,12 +125,18 @@ class EdgeOverlayService : Service() {
         if (triggerView != null) return
 
         val density = resources.displayMetrics.density
-        val widthPx = (prefs.triggerWidthDp * density).toInt()
-        val heightPx = (resources.displayMetrics.heightPixels * 0.65f).toInt()
+        val screenH = resources.displayMetrics.heightPixels
+        val sizeRatio = (prefs.triggerSizePercent / 100f).coerceIn(0.28f, 0.90f)
 
-        val handle = View(this).apply {
-            // Leggerissima linea guida quasi invisibile sul bordo
-            setBackgroundColor(Color.argb(28, 255, 255, 255))
+        val widthPx = (prefs.triggerWidthDp * density).toInt().coerceAtLeast((16 * density).toInt())
+        val heightPx = (screenH * sizeRatio).toInt()
+
+        val handle = EdgeTriggerView(this, prefs)
+
+        val verticalGravity = if (prefs.isTriggerBottomCorner) {
+            Gravity.BOTTOM
+        } else {
+            Gravity.CENTER_VERTICAL
         }
 
         val params = WindowManager.LayoutParams(
@@ -128,13 +147,16 @@ class EdgeOverlayService : Service() {
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = (if (prefs.isRightSide) Gravity.END else Gravity.START) or Gravity.CENTER_VERTICAL
+            gravity = (if (prefs.isRightSide) Gravity.END else Gravity.START) or verticalGravity
+            if (prefs.isTriggerBottomCorner) {
+                y = (28 * density).toInt()
+            }
         }
 
         var downX = 0f
         var downY = 0f
         var triggeredInThisTouch = false
-        val swipeThreshold = 16 * density
+        val swipeThreshold = 12 * density
 
         handle.setOnTouchListener { _, event ->
             when (event.action) {
@@ -148,9 +170,15 @@ class EdgeOverlayService : Service() {
                     if (!triggeredInThisTouch) {
                         val dx = if (prefs.isRightSide) downX - event.rawX else event.rawX - downX
                         val dy = abs(event.rawY - downY)
-                        if (dx > swipeThreshold && dx > dy * 0.7f) {
+                        // Si apre sia scorrendo verso l'interno sia scorrendo verticalmente sull'alfabeto
+                        if (dx > swipeThreshold || dy > swipeThreshold * 1.3f) {
                             triggeredInThisTouch = true
-                            openDrawer(fromContinuousSwipe = true, initialY = event.rawY)
+                            val startLetter = handle.getLetterAtY(event.y)
+                            openDrawer(
+                                fromContinuousSwipe = true,
+                                initialLetter = startLetter,
+                                initialY = event.rawY
+                            )
                         }
                     } else {
                         drawerView?.handleExternalDrag(event.rawX, event.rawY, MotionEvent.ACTION_MOVE)
@@ -160,6 +188,14 @@ class EdgeOverlayService : Service() {
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (triggeredInThisTouch) {
                         drawerView?.handleExternalDrag(event.rawX, event.rawY, event.action)
+                    } else {
+                        // Tocco singolo su una lettera del trigger -> apre il pannello su quella lettera
+                        val tappedLetter = handle.getLetterAtY(event.y)
+                        openDrawer(
+                            fromContinuousSwipe = false,
+                            initialLetter = tappedLetter,
+                            initialY = event.rawY
+                        )
                     }
                     triggeredInThisTouch = false
                     true
@@ -182,7 +218,11 @@ class EdgeOverlayService : Service() {
         triggerView = null
     }
 
-    private fun openDrawer(fromContinuousSwipe: Boolean, initialY: Float) {
+    private fun openDrawer(
+        fromContinuousSwipe: Boolean,
+        initialLetter: Char,
+        initialY: Float
+    ) {
         if (isDrawerOpen) return
         isDrawerOpen = true
 
@@ -190,9 +230,9 @@ class EdgeOverlayService : Service() {
             context = this,
             repository = repository,
             prefs = prefs,
-            onLaunchApp = { appEntry ->
+            onLaunchApp = { appEntry, windowMode ->
                 closeDrawer()
-                launchTargetApp(appEntry.packageName)
+                launchTargetApp(appEntry.packageName, windowMode)
             },
             onDismiss = {
                 closeDrawer()
@@ -223,8 +263,8 @@ class EdgeOverlayService : Service() {
         windowManager.addView(overlay, params)
 
         overlay.post {
-            overlay.prepareOpen(fromContinuousSwipe, initialY)
-            overlay.animate().alpha(1f).setDuration(140L).start()
+            overlay.prepareOpen(fromContinuousSwipe, initialLetter, initialY)
+            overlay.animate().alpha(1f).setDuration(110L).start()
         }
     }
 
@@ -238,10 +278,89 @@ class EdgeOverlayService : Service() {
         }
     }
 
-    private fun launchTargetApp(packageName: String) {
+    private fun launchTargetApp(packageName: String, mode: LaunchWindowMode) {
         val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: return
-        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
-        startActivity(launchIntent)
+
+        val screenW = resources.displayMetrics.widthPixels
+        val screenH = resources.displayMetrics.heightPixels
+
+        when (mode) {
+            LaunchWindowMode.NORMAL -> {
+                launchIntent.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+                )
+                startActivity(launchIntent)
+            }
+
+            LaunchWindowMode.POPUP -> {
+                launchIntent.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+                )
+                // Compatibilità extra per finestra mobile su MIUI / HyperOS / POCO
+                launchIntent.putExtra("miui.intent.extra.OPEN_IN_FREEFORM", true)
+
+                val marginX = (screenW * 0.10f).toInt()
+                val marginY = (screenH * 0.18f).toInt()
+                val popupBounds = Rect(marginX, marginY, screenW - marginX, screenH - marginY)
+
+                val options = createWindowModeOptions(windowingMode = 5, bounds = popupBounds)
+                startActivity(launchIntent, options.toBundle())
+            }
+
+            LaunchWindowMode.SPLIT_TOP -> {
+                val acc = EdgeAccessibilityService.instance
+                if (acc != null) {
+                    launchIntent.addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+                    )
+                    startActivity(launchIntent)
+                    mainHandler.postDelayed({
+                        acc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
+                    }, 240L)
+                } else {
+                    launchIntent.addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT
+                    )
+                    val topBounds = Rect(0, 0, screenW, screenH / 2)
+                    val options = createWindowModeOptions(windowingMode = 3, bounds = topBounds)
+                    startActivity(launchIntent, options.toBundle())
+                }
+            }
+
+            LaunchWindowMode.SPLIT_BOTTOM -> {
+                val acc = EdgeAccessibilityService.instance
+                if (acc != null) {
+                    acc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
+                    mainHandler.postDelayed({
+                        launchIntent.addFlags(
+                            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT
+                        )
+                        startActivity(launchIntent)
+                    }, 220L)
+                } else {
+                    launchIntent.addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT
+                    )
+                    val bottomBounds = Rect(0, screenH / 2, screenW, screenH)
+                    val options = createWindowModeOptions(windowingMode = 4, bounds = bottomBounds)
+                    startActivity(launchIntent, options.toBundle())
+                }
+            }
+        }
+    }
+
+    private fun createWindowModeOptions(windowingMode: Int, bounds: Rect): ActivityOptions {
+        val options = ActivityOptions.makeBasic()
+        options.setLaunchBounds(bounds)
+        try {
+            val method = ActivityOptions::class.java.getMethod(
+                "setLaunchWindowingMode",
+                Int::class.javaPrimitiveType
+            )
+            method.invoke(options, windowingMode)
+        } catch (_: Exception) {
+        }
+        return options
     }
 
     override fun onDestroy() {
@@ -252,4 +371,37 @@ class EdgeOverlayService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+}
+
+class EdgeAccessibilityService : AccessibilityService() {
+    companion object {
+        @Volatile
+        var instance: EdgeAccessibilityService? = null
+    }
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        instance = this
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+
+    override fun onInterrupt() {}
+
+    override fun onDestroy() {
+        instance = null
+        super.onDestroy()
+    }
+}
+
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+            val prefs = PrefsManager(context)
+            if (prefs.isServiceEnabled && Settings.canDrawOverlays(context)) {
+                val serviceIntent = Intent(context, EdgeOverlayService::class.java)
+                ContextCompat.startForegroundService(context, serviceIntent)
+            }
+        }
+    }
 }
