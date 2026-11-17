@@ -1,11 +1,15 @@
 package com.edgedrawer.app
 
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.view.Gravity
+import android.view.View
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -26,42 +30,56 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = Color.parseColor("#0F1117")
-        window.navigationBarColor = Color.parseColor("#0F1117")
         prefs = PrefsManager(this)
+        buildOneUIScreen()
+    }
+
+    private fun buildOneUIScreen() {
+        val isNight = prefs.isNightThemeActive()
+        val accent = prefs.getAccentColor()
+
+        val bgMain = if (isNight) Color.parseColor("#0B0D12") else Color.parseColor("#F2F4F8")
+        val cardBg = if (isNight) Color.parseColor("#171B24") else Color.WHITE
+        val textPrimary = if (isNight) Color.WHITE else Color.parseColor("#11141A")
+        val textSecondary = if (isNight) Color.parseColor("#949EB0") else Color.parseColor("#5F6878")
+
+        window.statusBarColor = bgMain
+        window.navigationBarColor = bgMain
 
         val density = resources.displayMetrics.density
         fun dp(v: Int) = (v * density).toInt()
 
         val root = ScrollView(this).apply {
-            setBackgroundColor(Color.parseColor("#0F1117"))
+            setBackgroundColor(bgMain)
         }
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(42), dp(20), dp(36))
+            setPadding(dp(18), dp(36), dp(18), dp(36))
         }
 
         val title = TextView(this).apply {
-            text = "EdgeDrawer A–Z"
-            textSize = 26f
-            setTextColor(Color.WHITE)
+            text = "EdgeDrawer"
+            textSize = 30f
+            setTextColor(textPrimary)
             setTypeface(null, Typeface.BOLD)
         }
 
         val subtitle = TextView(this).apply {
-            text = "Indice alfabetico trasparente, filtro colore diretto e apertura Pop-up / Split"
+            text = "Scorrimento verticale A–Z, filtro colore sotto la Z e finestre rapide"
             textSize = 13.5f
-            setTextColor(Color.parseColor("#9AA3B2"))
+            setTextColor(textSecondary)
             setPadding(0, dp(4), 0, dp(18))
         }
 
-        // --- CARD 1: PERMESSI E ATTIVAZIONE ---
-        val cardMain = createCard(dp(16))
-        val mainLayout = createCardInner(dp(16))
+        // --- CARD 1: ATTIVAZIONE & PERMESSI ---
+        val cardMain = createCard(cardBg, dp(16))
+        val mainLayout = createCardInner(dp(18))
 
         btnPermission = MaterialButton(this).apply {
-            text = "1. Concedi permesso 'Mostra sopra altre app'"
+            text = "1. Permesso 'Mostra sopra altre app'"
+            backgroundTintList = ColorStateList.valueOf(accent)
+            setTextColor(Color.WHITE)
             setOnClickListener {
                 startActivity(
                     Intent(
@@ -73,8 +91,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         switchEnable = MaterialSwitch(this).apply {
-            text = "2. Attiva indice laterale ovunque"
-            setTextColor(Color.WHITE)
+            text = "2. Attiva indice verticale sul bordo"
+            setTextColor(textPrimary)
             textSize = 15.5f
             setPadding(0, dp(10), 0, dp(6))
             isChecked = prefs.isServiceEnabled
@@ -100,17 +118,19 @@ class MainActivity : AppCompatActivity() {
 
         btnSplitSupport = MaterialButton(this).apply {
             text = "3. Abilita Schermo Diviso (Metà sopra/sotto)"
-            setBackgroundColor(Color.parseColor("#242B3D"))
-            setTextColor(Color.WHITE)
+            backgroundTintList = ColorStateList.valueOf(
+                if (isNight) Color.parseColor("#252B3B") else Color.parseColor("#E6EAF2")
+            )
+            setTextColor(textPrimary)
             setOnClickListener {
                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             }
         }
 
         val btnTest = MaterialButton(this).apply {
-            text = "Apri pannello adesso"
-            setBackgroundColor(Color.parseColor("#1F2636"))
-            setTextColor(Color.parseColor("#4D94FF"))
+            text = "Anteprima pannello adesso"
+            backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+            setTextColor(accent)
             setOnClickListener {
                 if (!Settings.canDrawOverlays(this@MainActivity)) {
                     Toast.makeText(this@MainActivity, "Attiva prima il permesso", Toast.LENGTH_SHORT).show()
@@ -131,15 +151,94 @@ class MainActivity : AppCompatActivity() {
         mainLayout.addView(btnTest)
         cardMain.addView(mainLayout)
 
-        // --- CARD 2: IMPOSTAZIONI TRIGGER ALFABETICO ---
-        val cardTrigger = createCard(dp(16))
-        val triggerLayout = createCardInner(dp(16))
+        // --- CARD 2: TEMA ONE UI (GIORNO / NOTTE & COLORE ACCENTO) ---
+        val cardTheme = createCard(cardBg, dp(16))
+        val themeLayout = createCardInner(dp(18))
+        themeLayout.addView(createSectionHeader("Aspetto & Tema One UI", accent, dp(10)))
 
-        triggerLayout.addView(createSectionHeader("Trigger Alfabetico sul Bordo", dp(10)))
+        val themeModeLabel = TextView(this).apply {
+            text = when (prefs.themeMode) {
+                1 -> "Modalità tema: Giorno"
+                2 -> "Modalità tema: Notte"
+                else -> "Modalità tema: Automatico (Sistema)"
+            }
+            setTextColor(textPrimary)
+            textSize = 14.5f
+            setPadding(0, 0, 0, dp(8))
+        }
+        themeLayout.addView(themeModeLabel)
+
+        val themeButtonsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val modes = listOf("Auto" to 0, "Giorno" to 1, "Notte" to 2)
+        modes.forEach { (label, modeVal) ->
+            val btn = MaterialButton(this).apply {
+                text = label
+                textSize = 12.5f
+                val active = prefs.themeMode == modeVal
+                backgroundTintList = ColorStateList.valueOf(
+                    if (active) accent else (if (isNight) Color.parseColor("#252B3B") else Color.parseColor("#E6EAF2"))
+                )
+                setTextColor(if (active) Color.WHITE else textPrimary)
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = dp(6)
+                }
+                setOnClickListener {
+                    prefs.themeMode = modeVal
+                    notifyServiceReload()
+                    buildOneUIScreen()
+                }
+            }
+            themeButtonsRow.addView(btn)
+        }
+        themeLayout.addView(themeButtonsRow)
+
+        val accentLabel = TextView(this).apply {
+            text = "Colore accento"
+            setTextColor(textPrimary)
+            textSize = 14.5f
+            setPadding(0, dp(14), 0, dp(8))
+        }
+        themeLayout.addView(accentLabel)
+
+        val accentRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.START
+        }
+        OneUIAccent.entries.forEachIndexed { idx, item ->
+            val circle = View(this).apply {
+                val size = dp(32)
+                layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                    marginEnd = dp(10)
+                }
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(item.colorInt)
+                    if (prefs.accentIndex == idx) {
+                        setStroke(dp(3), textPrimary)
+                    }
+                }
+                setOnClickListener {
+                    prefs.accentIndex = idx
+                    notifyServiceReload()
+                    buildOneUIScreen()
+                }
+            }
+            accentRow.addView(circle)
+        }
+        themeLayout.addView(accentRow)
+        cardTheme.addView(themeLayout)
+
+        // --- CARD 3: TRIGGER LATERALE & POSIZIONE VERTICALE ---
+        val cardTrigger = createCard(cardBg, dp(16))
+        val triggerLayout = createCardInner(dp(18))
+        triggerLayout.addView(createSectionHeader("Trigger Laterale & Posizionamento", accent, dp(10)))
 
         val sideSwitch = MaterialSwitch(this).apply {
             text = if (prefs.isRightSide) "Lato schermo: Destra" else "Lato schermo: Sinistra"
-            setTextColor(Color.WHITE)
+            setTextColor(textPrimary)
             isChecked = prefs.isRightSide
             setOnCheckedChangeListener { _, isRight ->
                 prefs.isRightSide = isRight
@@ -148,21 +247,21 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val cornerSwitch = MaterialSwitch(this).apply {
-            text = if (prefs.isTriggerBottomCorner) "Posizione: Angolo in basso" else "Posizione: Centro verticale"
-            setTextColor(Color.WHITE)
+        val triggerColorSwitch = MaterialSwitch(this).apply {
+            text = if (prefs.isTriggerTextBlack) "Colore lettere trigger: Nero" else "Colore lettere trigger: Bianco"
+            setTextColor(textPrimary)
             setPadding(0, dp(6), 0, 0)
-            isChecked = prefs.isTriggerBottomCorner
-            setOnCheckedChangeListener { _, inCorner ->
-                prefs.isTriggerBottomCorner = inCorner
-                text = if (inCorner) "Posizione: Angolo in basso" else "Posizione: Centro verticale"
+            isChecked = prefs.isTriggerTextBlack
+            setOnCheckedChangeListener { _, isBlack ->
+                prefs.isTriggerTextBlack = isBlack
+                text = if (isBlack) "Colore lettere trigger: Nero" else "Colore lettere trigger: Bianco"
                 notifyServiceReload()
             }
         }
 
         val hideTriggerSwitch = MaterialSwitch(this).apply {
-            text = "Nascondi lettere trigger (solo gesture invisibile)"
-            setTextColor(Color.WHITE)
+            text = "Nascondi lettere trigger (solo scorrimento invisibile)"
+            setTextColor(textPrimary)
             setPadding(0, dp(6), 0, 0)
             isChecked = prefs.isTriggerHidden
             setOnCheckedChangeListener { _, hidden ->
@@ -172,28 +271,46 @@ class MainActivity : AppCompatActivity() {
         }
 
         triggerLayout.addView(sideSwitch)
-        triggerLayout.addView(cornerSwitch)
+        triggerLayout.addView(triggerColorSwitch)
         triggerLayout.addView(hideTriggerSwitch)
 
         addSlider(
             parent = triggerLayout,
-            titlePrefix = "Altezza/Dimensione trigger",
+            titlePrefix = "Altezza indice (Trigger e Pannello)",
             unit = "%",
-            min = 28,
+            min = 30,
             max = 90,
-            initial = prefs.triggerSizePercent,
+            initial = prefs.barHeightPercent,
+            textColor = textPrimary,
+            accentColor = accent,
             dp12 = dp(12),
-            onChanged = { prefs.triggerSizePercent = it },
+            onChanged = { prefs.barHeightPercent = it },
             onStop = { notifyServiceReload() }
         )
 
         addSlider(
             parent = triggerLayout,
-            titlePrefix = "Larghezza area tocco trigger",
+            titlePrefix = "Posizione verticale (Alto ↔ In fondo)",
+            unit = "%",
+            min = 0,
+            max = 100,
+            initial = prefs.verticalPositionPercent,
+            textColor = textPrimary,
+            accentColor = accent,
+            dp12 = dp(12),
+            onChanged = { prefs.verticalPositionPercent = it },
+            onStop = { notifyServiceReload() }
+        )
+
+        addSlider(
+            parent = triggerLayout,
+            titlePrefix = "Larghezza area tocco bordo",
             unit = " dp",
-            min = 16,
-            max = 44,
+            min = 18,
+            max = 46,
             initial = prefs.triggerWidthDp,
+            textColor = textPrimary,
+            accentColor = accent,
             dp12 = dp(12),
             onChanged = { prefs.triggerWidthDp = it },
             onStop = { notifyServiceReload() }
@@ -201,11 +318,13 @@ class MainActivity : AppCompatActivity() {
 
         addSlider(
             parent = triggerLayout,
-            titlePrefix = "Visibilità lettere trigger",
+            titlePrefix = "Opacità lettere trigger",
             unit = "%",
-            min = 5,
+            min = 0,
             max = 100,
             initial = prefs.triggerAlphaPercent,
+            textColor = textPrimary,
+            accentColor = accent,
             dp12 = dp(12),
             onChanged = { prefs.triggerAlphaPercent = it },
             onStop = { notifyServiceReload() }
@@ -213,76 +332,149 @@ class MainActivity : AppCompatActivity() {
 
         cardTrigger.addView(triggerLayout)
 
-        // --- CARD 3: IMPOSTAZIONI PANNELLO E APP ---
-        val cardPanel = createCard(dp(16))
-        val panelLayout = createCardInner(dp(16))
+        // --- CARD 4: TRASPARENZA, BLUR E ANIMAZIONE NIAGARA ---
+        val cardVisual = createCard(cardBg, dp(16))
+        val visualLayout = createCardInner(dp(18))
+        visualLayout.addView(createSectionHeader("Trasparenza, Blur & Animazioni", accent, dp(10)))
 
-        panelLayout.addView(createSectionHeader("Pannello Aperto & Icone App", dp(10)))
+        addSlider(
+            parent = visualLayout,
+            titlePrefix = "Sfocatura sfondo (Blur)",
+            unit = "",
+            min = 0,
+            max = 120,
+            initial = prefs.blurRadius,
+            textColor = textPrimary,
+            accentColor = accent,
+            dp12 = dp(8),
+            onChanged = { prefs.blurRadius = it },
+            onStop = {}
+        )
+
+        addSlider(
+            parent = visualLayout,
+            titlePrefix = "Opacità sfondo pannello",
+            unit = "%",
+            min = 0,
+            max = 100,
+            initial = prefs.panelBgAlphaPercent,
+            textColor = textPrimary,
+            accentColor = accent,
+            dp12 = dp(12),
+            onChanged = { prefs.panelBgAlphaPercent = it },
+            onStop = {}
+        )
+
+        addSlider(
+            parent = visualLayout,
+            titlePrefix = "Opacità barra alfabetica pannello",
+            unit = "%",
+            min = 0,
+            max = 100,
+            initial = prefs.indexBarAlphaPercent,
+            textColor = textPrimary,
+            accentColor = accent,
+            dp12 = dp(12),
+            onChanged = { prefs.indexBarAlphaPercent = it },
+            onStop = {}
+        )
+
+        addSlider(
+            parent = visualLayout,
+            titlePrefix = "Forza animazione onda (stile Niagara)",
+            unit = "%",
+            min = 0,
+            max = 140,
+            initial = prefs.waveStrengthPercent,
+            textColor = textPrimary,
+            accentColor = accent,
+            dp12 = dp(12),
+            onChanged = { prefs.waveStrengthPercent = it },
+            onStop = {}
+        )
+
+        cardVisual.addView(visualLayout)
+
+        // --- CARD 5: DISTANZE & DIMENSIONI APP ---
+        val cardSpacing = createCard(cardBg, dp(16))
+        val spacingLayout = createCardInner(dp(18))
+        spacingLayout.addView(createSectionHeader("Dimensioni & Distanze App", accent, dp(10)))
 
         val labelsSwitch = MaterialSwitch(this).apply {
             text = "Mostra etichette nomi app"
-            setTextColor(Color.WHITE)
+            setTextColor(textPrimary)
             isChecked = prefs.showAppLabels
             setOnCheckedChangeListener { _, show ->
                 prefs.showAppLabels = show
             }
         }
-        panelLayout.addView(labelsSwitch)
+        spacingLayout.addView(labelsSwitch)
 
         addSlider(
-            parent = panelLayout,
-            titlePrefix = "Dimensione pannello e icone",
+            parent = spacingLayout,
+            titlePrefix = "Scala generale pannello e icone",
             unit = "%",
             min = 70,
             max = 130,
             initial = prefs.panelScalePercent,
+            textColor = textPrimary,
+            accentColor = accent,
             dp12 = dp(12),
             onChanged = { prefs.panelScalePercent = it },
-            onStop = {}
+            onStop = { notifyServiceReload() }
         )
 
         addSlider(
-            parent = panelLayout,
-            titlePrefix = "Opacità sfondo pannello",
-            unit = "%",
-            min = 20,
-            max = 100,
-            initial = prefs.panelAlphaPercent,
+            parent = spacingLayout,
+            titlePrefix = "Distanza verticale tra le app",
+            unit = " dp",
+            min = 2,
+            max = 32,
+            initial = prefs.appSpacingDp,
+            textColor = textPrimary,
+            accentColor = accent,
             dp12 = dp(12),
-            onChanged = { prefs.panelAlphaPercent = it },
+            onChanged = { prefs.appSpacingDp = it },
             onStop = {}
         )
 
         addSlider(
-            parent = panelLayout,
-            titlePrefix = "Intensità effetto Blur",
-            unit = "",
+            parent = spacingLayout,
+            titlePrefix = "Distanza etichetta dall'icona",
+            unit = " dp",
             min = 0,
-            max = 100,
-            initial = prefs.blurRadius,
+            max = 18,
+            initial = prefs.labelDistanceDp,
+            textColor = textPrimary,
+            accentColor = accent,
             dp12 = dp(12),
-            onChanged = { prefs.blurRadius = it },
+            onChanged = { prefs.labelDistanceDp = it },
             onStop = {}
         )
 
-        cardPanel.addView(panelLayout)
+        addSlider(
+            parent = spacingLayout,
+            titlePrefix = "Distanza delle app dall'indice A–Z",
+            unit = " dp",
+            min = 4,
+            max = 44,
+            initial = prefs.appsFromIndexDp,
+            textColor = textPrimary,
+            accentColor = accent,
+            dp12 = dp(12),
+            onChanged = { prefs.appsFromIndexDp = it },
+            onStop = {}
+        )
 
-        // Guida rapida
-        val guideText = TextView(this).apply {
-            text = "• Scorri sul trigger alfabetico per aprire su ↓ (Recenti) o A–Z.\n" +
-                "• Senza staccare il dito: passa sui pallini colorati in basso per filtrare per colore, poi risali sull'alfabeto.\n" +
-                "• Tieni fermo il dito su un'app: appaiono di fianco 'Pop-up', 'Metà sopra' e 'Metà sotto' (trascina verso il centro e rilascia per sceglierli)."
-            setTextColor(Color.parseColor("#9AA3B2"))
-            textSize = 13f
-            setPadding(dp(4), dp(8), dp(4), 0)
-        }
+        cardSpacing.addView(spacingLayout)
 
         container.addView(title)
         container.addView(subtitle)
         container.addView(cardMain)
+        container.addView(cardTheme)
         container.addView(cardTrigger)
-        container.addView(cardPanel)
-        container.addView(guideText)
+        container.addView(cardVisual)
+        container.addView(cardSpacing)
         root.addView(container)
         setContentView(root)
     }
@@ -293,7 +485,7 @@ class MainActivity : AppCompatActivity() {
         btnPermission.text = if (hasOverlay) {
             "1. Permesso 'Mostra sopra altre app' OK ✓"
         } else {
-            "1. Concedi permesso 'Mostra sopra altre app'"
+            "1. Permesso 'Mostra sopra altre app'"
         }
 
         val hasSplit = EdgeAccessibilityService.instance != null
@@ -317,10 +509,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun createCard(marginBottomPx: Int): MaterialCardView {
+    private fun createCard(bgColor: Int, marginBottomPx: Int): MaterialCardView {
         return MaterialCardView(this).apply {
-            setCardBackgroundColor(Color.parseColor("#181C26"))
-            radius = 40f
+            setCardBackgroundColor(bgColor)
+            radius = 52f
             cardElevation = 0f
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -338,11 +530,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun createSectionHeader(textStr: String, bottomPad: Int): TextView {
+    private fun createSectionHeader(textStr: String, color: Int, bottomPad: Int): TextView {
         return TextView(this).apply {
             text = textStr
-            textSize = 16f
-            setTextColor(Color.parseColor("#4D94FF"))
+            textSize = 16.5f
+            setTextColor(color)
             setTypeface(null, Typeface.BOLD)
             setPadding(0, 0, 0, bottomPad)
         }
@@ -355,18 +547,23 @@ class MainActivity : AppCompatActivity() {
         min: Int,
         max: Int,
         initial: Int,
+        textColor: Int,
+        accentColor: Int,
         dp12: Int,
         onChanged: (Int) -> Unit,
         onStop: () -> Unit
     ) {
         val label = TextView(this).apply {
             text = "$titlePrefix: $initial$unit"
-            setTextColor(Color.WHITE)
+            setTextColor(textColor)
+            textSize = 14f
             setPadding(0, dp12, 0, 4)
         }
         val seek = SeekBar(this).apply {
             this.max = max - min
             this.progress = (initial - min).coerceIn(0, max - min)
+            thumbTintList = ColorStateList.valueOf(accentColor)
+            progressTintList = ColorStateList.valueOf(accentColor)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, value: Int, fromUser: Boolean) {
                     val realVal = min + value
