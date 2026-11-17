@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
@@ -161,6 +162,11 @@ object IconColorAnalyzer {
 }
 
 class AppRepository(private val context: Context, private val prefs: PrefsManager) {
+    companion object {
+        // Valore ufficiale di PackageManager.MATCH_ARCHIVED_PACKAGES in Android 15+ (compatibile anche con compileSdk 34)
+        private const val FLAG_MATCH_ARCHIVED = 1L shl 32
+    }
+
     private val executor = Executors.newSingleThreadExecutor()
 
     @Volatile
@@ -197,20 +203,28 @@ class AppRepository(private val context: Context, private val prefs: PrefsManage
         }
     }
 
+    private fun isApplicationArchived(appInfo: ApplicationInfo?): Boolean {
+        if (appInfo == null) return false
+        return try {
+            ApplicationInfo::class.java.getField("isArchived").getBoolean(appInfo)
+        } catch (_: Exception) {
+            try {
+                (ApplicationInfo::class.java.getMethod("isArchived").invoke(appInfo) as? Boolean) == true
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
+
     fun reloadAppsAsync(onComplete: (() -> Unit)? = null) {
         executor.execute {
             val pm = context.packageManager
             val mainIntent = Intent(Intent.ACTION_MAIN, null).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
 
-            // Include anche le app archiviate dal sistema (Android 15/16+)
-            val resolved = if (Build.VERSION.SDK_INT >= 35) {
-                val flags = PackageManager.MATCH_ALL.toLong() or PackageManager.MATCH_ARCHIVED_PACKAGES
+            val resolved = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val archivedBit = if (Build.VERSION.SDK_INT >= 35) FLAG_MATCH_ARCHIVED else 0L
+                val flags = PackageManager.MATCH_ALL.toLong() or archivedBit
                 pm.queryIntentActivities(mainIntent, PackageManager.ResolveInfoFlags.of(flags))
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                pm.queryIntentActivities(
-                    mainIntent,
-                    PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_ALL.toLong())
-                )
             } else {
                 @Suppress("DEPRECATION")
                 pm.queryIntentActivities(mainIntent, PackageManager.MATCH_ALL)
@@ -226,11 +240,7 @@ class AppRepository(private val context: Context, private val prefs: PrefsManage
                     if (pkg == myPkg || loadedMap.containsKey(pkg)) continue
 
                     val label = info.loadLabel(pm).toString()
-                    val isArchived = if (Build.VERSION.SDK_INT >= 35) {
-                        info.activityInfo?.applicationInfo?.isArchived == true
-                    } else {
-                        false
-                    }
+                    val isArchived = isApplicationArchived(info.activityInfo?.applicationInfo)
                     val bitmap = IconColorAnalyzer.drawableToBitmap(info.loadIcon(pm), iconSizePx)
                     val installTime = try {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -257,17 +267,17 @@ class AppRepository(private val context: Context, private val prefs: PrefsManage
                 }
             }
 
-            // Integrazione extra per eventuali pacchetti archiviati non inclusi in queryIntentActivities
+            // Integrazione extra per pacchetti archiviati dal sistema su Android 15/16+
             if (Build.VERSION.SDK_INT >= 35) {
                 try {
                     val allPkgs = pm.getInstalledPackages(
-                        PackageManager.PackageInfoFlags.of(PackageManager.MATCH_ARCHIVED_PACKAGES)
+                        PackageManager.PackageInfoFlags.of(FLAG_MATCH_ARCHIVED)
                     )
                     for (pkgInfo in allPkgs) {
                         val pkg = pkgInfo.packageName ?: continue
                         if (pkg == myPkg || loadedMap.containsKey(pkg)) continue
                         val appInfo = pkgInfo.applicationInfo ?: continue
-                        if (appInfo.isArchived) {
+                        if (isApplicationArchived(appInfo)) {
                             val label = pm.getApplicationLabel(appInfo).toString()
                             val bitmap = IconColorAnalyzer.drawableToBitmap(pm.getApplicationIcon(appInfo), iconSizePx)
                             loadedMap[pkg] = AppEntry(
