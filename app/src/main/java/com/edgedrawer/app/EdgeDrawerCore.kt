@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -30,6 +31,15 @@ enum class LaunchWindowMode(val title: String) {
     POPUP("Pop-up"),
     SPLIT_TOP("Metà sopra"),
     SPLIT_BOTTOM("Metà sotto")
+}
+
+enum class OneUIAccent(val label: String, val colorInt: Int) {
+    BLUE("Blu One UI", Color.parseColor("#3E91FF")),
+    PURPLE("Viola", Color.parseColor("#9C6BFF")),
+    MINT("Verde Menta", Color.parseColor("#1ED78D")),
+    CORAL("Corallo", Color.parseColor("#FF5C5C")),
+    AMBER("Ambra", Color.parseColor("#FFB82E")),
+    MONO("Neutro", Color.parseColor("#8E97A8"))
 }
 
 data class AppEntry(
@@ -164,7 +174,7 @@ class AppRepository(private val context: Context) {
             }
 
             val density = context.resources.displayMetrics.density
-            val iconSizePx = (56 * density).toInt().coerceAtLeast(72)
+            val iconSizePx = (58 * density).toInt().coerceAtLeast(76)
             val myPkg = context.packageName
 
             val loaded = resolved
@@ -206,7 +216,6 @@ class AppRepository(private val context: Context) {
                 .sortedBy { it.label.lowercase() }
                 .toList()
 
-            // Pre-indicizza tutte le combinazioni (Lettera, Colore) in memoria per scorrimento istantaneo
             val newLetterCache = HashMap<Pair<Char, AppColorFilter>, List<AppEntry>>()
             val newRecentCache = HashMap<AppColorFilter, List<AppEntry>>()
             val sortedByRecent = loaded.sortedByDescending { it.installTime }
@@ -248,7 +257,7 @@ class AppRepository(private val context: Context) {
     }
 }
 
-class PrefsManager(context: Context) {
+class PrefsManager(private val context: Context) {
     private val prefs = context.getSharedPreferences("edge_drawer_prefs", Context.MODE_PRIVATE)
 
     var isServiceEnabled: Boolean
@@ -259,42 +268,92 @@ class PrefsManager(context: Context) {
         get() = prefs.getBoolean("is_right_side", true)
         set(value) = prefs.edit().putBoolean("is_right_side", value).apply()
 
+    // Tema Giorno/Notte (0 = Sistema, 1 = Giorno, 2 = Notte) & Accento One UI
+    var themeMode: Int
+        get() = prefs.getInt("theme_mode", 0)
+        set(value) = prefs.edit().putInt("theme_mode", value).apply()
+
+    var accentIndex: Int
+        get() = prefs.getInt("accent_index", 0)
+        set(value) = prefs.edit().putInt("accent_index", value).apply()
+
+    fun getAccentColor(): Int {
+        val entries = OneUIAccent.entries
+        return entries[accentIndex.coerceIn(0, entries.lastIndex)].colorInt
+    }
+
+    fun isNightThemeActive(): Boolean {
+        return when (themeMode) {
+            1 -> false
+            2 -> true
+            else -> {
+                val uiMode = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+                uiMode == Configuration.UI_MODE_NIGHT_YES
+            }
+        }
+    }
+
     // Trigger alfabetico laterale
     var isTriggerHidden: Boolean
         get() = prefs.getBoolean("trigger_hidden", false)
         set(value) = prefs.edit().putBoolean("trigger_hidden", value).apply()
 
-    var isTriggerBottomCorner: Boolean
-        get() = prefs.getBoolean("trigger_bottom_corner", false)
-        set(value) = prefs.edit().putBoolean("trigger_bottom_corner", value).apply()
+    var isTriggerTextBlack: Boolean
+        get() = prefs.getBoolean("trigger_text_black", false)
+        set(value) = prefs.edit().putBoolean("trigger_text_black", value).apply()
 
-    // Scala altezza/dimensione trigger (35% .. 100%)
-    var triggerSizePercent: Int
-        get() = prefs.getInt("trigger_size_percent", 85)
-        set(value) = prefs.edit().putInt("trigger_size_percent", value).apply()
+    // Altezza barra trigger & pannello (28% .. 92%)
+    var barHeightPercent: Int
+        get() = prefs.getInt("bar_height_percent", 78)
+        set(value) = prefs.edit().putInt("bar_height_percent", value).apply()
 
-    // Larghezza area tocco trigger (16 .. 44 dp)
+    // Posizione verticale barra (0 = in alto, 50 = centro, 100 = in fondo)
+    var verticalPositionPercent: Int
+        get() = prefs.getInt("vertical_position_percent", 55)
+        set(value) = prefs.edit().putInt("vertical_position_percent", value).apply()
+
     var triggerWidthDp: Int
-        get() = prefs.getInt("trigger_width_dp", 24)
+        get() = prefs.getInt("trigger_width_dp", 28)
         set(value) = prefs.edit().putInt("trigger_width_dp", value).apply()
 
-    // Opacità trigger (0 .. 100%, default 40% molto trasparente)
     var triggerAlphaPercent: Int
-        get() = prefs.getInt("trigger_alpha_percent", 40)
+        get() = prefs.getInt("trigger_alpha_percent", 55)
         set(value) = prefs.edit().putInt("trigger_alpha_percent", value).apply()
 
-    // Pannello aperto
+    // Pannello & Barra alfabetica aperta
     var panelScalePercent: Int
         get() = prefs.getInt("panel_scale_percent", 100)
         set(value) = prefs.edit().putInt("panel_scale_percent", value).apply()
 
-    var panelAlphaPercent: Int
-        get() = prefs.getInt("panel_alpha_percent", 82)
-        set(value) = prefs.edit().putInt("panel_alpha_percent", value).apply()
+    var panelBgAlphaPercent: Int
+        get() = prefs.getInt("panel_bg_alpha_percent", 72)
+        set(value) = prefs.edit().putInt("panel_bg_alpha_percent", value).apply()
+
+    var indexBarAlphaPercent: Int
+        get() = prefs.getInt("index_bar_alpha_percent", 80)
+        set(value) = prefs.edit().putInt("index_bar_alpha_percent", value).apply()
 
     var blurRadius: Int
-        get() = prefs.getInt("blur_radius", 50)
+        get() = prefs.getInt("blur_radius", 60)
         set(value) = prefs.edit().putInt("blur_radius", value).apply()
+
+    // Distanze millimetriche layout
+    var appSpacingDp: Int
+        get() = prefs.getInt("app_spacing_dp", 12)
+        set(value) = prefs.edit().putInt("app_spacing_dp", value).apply()
+
+    var labelDistanceDp: Int
+        get() = prefs.getInt("label_distance_dp", 4)
+        set(value) = prefs.edit().putInt("label_distance_dp", value).apply()
+
+    var appsFromIndexDp: Int
+        get() = prefs.getInt("apps_from_index_dp", 14)
+        set(value) = prefs.edit().putInt("apps_from_index_dp", value).apply()
+
+    // Forza animazione onda Niagara Launcher (0 .. 100%)
+    var waveStrengthPercent: Int
+        get() = prefs.getInt("wave_strength_percent", 75)
+        set(value) = prefs.edit().putInt("wave_strength_percent", value).apply()
 
     var showAppLabels: Boolean
         get() = prefs.getBoolean("show_app_labels", true)
