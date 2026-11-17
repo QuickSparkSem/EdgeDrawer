@@ -1,44 +1,23 @@
 package com.edgedrawer.app
 
 import android.accessibilityservice.AccessibilityService
-import android.app.Activity
-import android.app.ActivityOptions
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.Service
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
+import android.app.*
+import android.content.*
 import android.content.pm.ServiceInfo
 import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.net.Uri
-import android.os.Build
-import android.os.Bundle
-import android.os.Handler
-import android.os.IBinder
-import android.os.Looper
+import android.os.*
 import android.provider.Settings
-import android.view.Gravity
-import android.view.MotionEvent
-import android.view.View
-import android.view.WindowInsets
-import android.view.WindowManager
+import android.view.*
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlin.math.abs
 
-/**
- * Activity trasparente istantanea: risolve i blocchi di Android 14-16 / Samsung One UI
- * quando si avvia un'app in finestra Pop-up o Schermo Diviso da un overlay.
- */
 class WindowLaunchProxyActivity : Activity() {
-
     companion object {
         const val EXTRA_PKG = "extra_pkg"
         const val EXTRA_MODE = "extra_mode"
@@ -46,163 +25,72 @@ class WindowLaunchProxyActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val pkg = intent.getStringExtra(EXTRA_PKG)
-        val modeName = intent.getStringExtra(EXTRA_MODE) ?: LaunchWindowMode.NORMAL.name
-        val mode = LaunchWindowMode.entries.firstOrNull { it.name == modeName } ?: LaunchWindowMode.NORMAL
-
-        if (pkg.isNullOrBlank()) {
-            finish()
-            return
-        }
+        val pkg = intent.getStringExtra(EXTRA_PKG) ?: return finish()
+        val mode = LaunchWindowMode.entries.firstOrNull { it.name == intent.getStringExtra(EXTRA_MODE) } ?: LaunchWindowMode.NORMAL
 
         if (mode == LaunchWindowMode.APP_INFO) {
-            try {
-                startActivity(
-                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg")).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                )
-            } catch (_: Exception) {
-            }
-            finish()
-            return
+            runCatching { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            return finish()
         }
 
-        val baseIntent = createBaseLaunchIntent(pkg)
-        if (baseIntent == null) {
-            finish()
-            return
+        val resolved = packageManager.getLaunchIntentForPackage(pkg) ?: return finish()
+        val baseIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setPackage(pkg).apply {
+            resolved.component?.let { component = it }
         }
 
-        val screenW = resources.displayMetrics.widthPixels
-        val screenH = resources.displayMetrics.heightPixels
+        val w = resources.displayMetrics.widthPixels
+        val h = resources.displayMetrics.heightPixels
 
         when (mode) {
             LaunchWindowMode.NORMAL -> {
-                baseIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
-                try {
-                    startActivity(baseIntent)
-                } catch (_: Exception) {
-                }
+                runCatching { startActivity(baseIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)) }
                 finish()
             }
-
             LaunchWindowMode.POPUP -> {
-                val marginX = (screenW * 0.08f).toInt()
-                val marginY = (screenH * 0.16f).toInt()
-                val popupBounds = Rect(marginX, marginY, screenW - marginX, screenH - marginY)
-
-                val popupIntent = Intent(baseIntent).apply {
-                    addFlags(
-                        Intent.FLAG_ACTIVITY_NEW_TASK or
-                            Intent.FLAG_ACTIVITY_MULTIPLE_TASK or
-                            Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT
-                    )
-                    putExtra("miui.intent.extra.OPEN_IN_FREEFORM", true)
-                    putExtra("android.activity.launchBounds", popupBounds)
+                val bounds = Rect((w * 0.08f).toInt(), (h * 0.16f).toInt(), (w * 0.92f).toInt(), (h * 0.84f).toInt())
+                baseIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT)
+                baseIntent.putExtra("miui.intent.extra.OPEN_IN_FREEFORM", true)
+                baseIntent.putExtra("android.activity.launchBounds", bounds)
+                val opts = ActivityOptions.makeBasic().apply {
+                    setLaunchBounds(bounds)
+                    runCatching { ActivityOptions::class.java.getMethod("setLaunchWindowingMode", Int::class.javaPrimitiveType).invoke(this, 5) }
                 }
-
-                val opts = createWindowModeOptions(windowingMode = 5, bounds = popupBounds)
-                try {
-                    startActivity(popupIntent, opts.toBundle())
-                } catch (_: Exception) {
-                    try {
-                        startActivity(
-                            popupIntent,
-                            ActivityOptions.makeBasic().apply { setLaunchBounds(popupBounds) }.toBundle()
-                        )
-                    } catch (_: Exception) {
-                        try {
-                            startActivity(popupIntent)
-                        } catch (_: Exception) {
-                        }
-                    }
-                }
+                runCatching { startActivity(baseIntent, opts.toBundle()) }.onFailure { runCatching { startActivity(baseIntent) } }
                 finish()
             }
-
             LaunchWindowMode.SPLIT_TOP, LaunchWindowMode.SPLIT_BOTTOM -> {
                 val isTop = mode == LaunchWindowMode.SPLIT_TOP
-                val bounds = if (isTop) Rect(0, 0, screenW, screenH / 2) else Rect(0, screenH / 2, screenW, screenH)
+                baseIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
                 val acc = EdgeAccessibilityService.instance
-
                 if (acc != null) {
                     acc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        val splitIntent = Intent(baseIntent).apply {
-                            addFlags(
-                                Intent.FLAG_ACTIVITY_NEW_TASK or
-                                    Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT or
-                                    Intent.FLAG_ACTIVITY_MULTIPLE_TASK
-                            )
-                        }
-                        try {
-                            startActivity(splitIntent)
-                        } catch (_: Exception) {
-                        }
-                        finish()
-                    }, 280L)
+                    Handler(Looper.getMainLooper()).postDelayed({ runCatching { startActivity(baseIntent) }; finish() }, 280L)
                 } else {
-                    val splitIntent = Intent(baseIntent).apply {
-                        addFlags(
-                            Intent.FLAG_ACTIVITY_NEW_TASK or
-                                Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT or
-                                Intent.FLAG_ACTIVITY_MULTIPLE_TASK
-                        )
+                    val bounds = if (isTop) Rect(0, 0, w, h / 2) else Rect(0, h / 2, w, h)
+                    val opts = ActivityOptions.makeBasic().apply {
+                        setLaunchBounds(bounds)
+                        runCatching { ActivityOptions::class.java.getMethod("setLaunchWindowingMode", Int::class.javaPrimitiveType).invoke(this, if (isTop) 3 else 4) }
                     }
-                    val opts = createWindowModeOptions(windowingMode = if (isTop) 3 else 4, bounds = bounds)
-                    try {
-                        startActivity(splitIntent, opts.toBundle())
-                    } catch (_: Exception) {
-                        try {
-                            startActivity(splitIntent)
-                        } catch (_: Exception) {
-                        }
-                    }
+                    runCatching { startActivity(baseIntent, opts.toBundle()) }.onFailure { runCatching { startActivity(baseIntent) } }
                     finish()
                 }
             }
-
-            LaunchWindowMode.APP_INFO -> finish()
+            else -> finish()
         }
-    }
-
-    private fun createBaseLaunchIntent(packageName: String): Intent? {
-        val resolved = packageManager.getLaunchIntentForPackage(packageName) ?: return null
-        val component = resolved.component ?: return resolved
-        return Intent(Intent.ACTION_MAIN).apply {
-            addCategory(Intent.CATEGORY_LAUNCHER)
-            setComponent(component)
-            setPackage(packageName)
-        }
-    }
-
-    private fun createWindowModeOptions(windowingMode: Int, bounds: Rect): ActivityOptions {
-        val options = ActivityOptions.makeBasic()
-        options.setLaunchBounds(bounds)
-        try {
-            ActivityOptions::class.java.getMethod("setLaunchWindowingMode", Int::class.javaPrimitiveType)
-                .invoke(options, windowingMode)
-        } catch (_: Exception) {
-        }
-        return options
     }
 }
 
 class EdgeOverlayService : Service() {
-
     companion object {
         const val ACTION_OPEN_DRAWER = "com.edgedrawer.app.ACTION_OPEN_DRAWER"
         const val ACTION_RELOAD_CONFIG = "com.edgedrawer.app.ACTION_RELOAD_CONFIG"
         const val ACTION_CONTEXT_CHANGED = "com.edgedrawer.app.ACTION_CONTEXT_CHANGED"
-        private const val CHANNEL_ID = "edge_drawer_channel"
-        private const val NOTIFICATION_ID = 101
     }
 
     private lateinit var windowManager: WindowManager
     private lateinit var prefs: PrefsManager
     private lateinit var repository: AppRepository
-    private val mainHandler = Handler(Looper.getMainLooper())
+    private val handler = Handler(Looper.getMainLooper())
 
     private var triggerView: EdgeTriggerView? = null
     private var drawerView: EdgeDrawerView? = null
@@ -213,108 +101,71 @@ class EdgeOverlayService : Service() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         prefs = PrefsManager(this)
-        repository = AppRepository(this, prefs)
-        repository.startListening()
+        repository = AppRepository(this, prefs).also { it.startListening() }
 
-        startAsForeground()
-        if (Settings.canDrawOverlays(this)) updateTriggerVisibilityState()
+        getSystemService(NotificationManager::class.java).createNotificationChannel(
+            NotificationChannel("edge_drawer_ch", "EdgeDrawer", NotificationManager.IMPORTANCE_LOW)
+        )
+        val notif = NotificationCompat.Builder(this, "edge_drawer_ch")
+            .setContentTitle("EdgeDrawer attivo")
+            .setSmallIcon(android.R.drawable.ic_menu_sort_alphabetically)
+            .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
+            .setOngoing(true).build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(101, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(101, notif)
+        }
+        if (Settings.canDrawOverlays(this)) updateTriggerState()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        updateTriggerVisibilityState()
+        updateTriggerState()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (!Settings.canDrawOverlays(this)) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
+        if (!Settings.canDrawOverlays(this)) { stopSelf(); return START_NOT_STICKY }
         when (intent?.action) {
-            ACTION_OPEN_DRAWER -> openDrawer(fromContinuousSwipe = false, initialSlot = EdgeIndexSlots.RECENT_SLOT_INDEX)
-            ACTION_RELOAD_CONFIG -> {
-                repository.rebuildFilteredCaches()
-                removeTriggerHandle()
-                updateTriggerVisibilityState()
-            }
-            ACTION_CONTEXT_CHANGED -> updateTriggerVisibilityState()
-            else -> updateTriggerVisibilityState()
+            ACTION_OPEN_DRAWER -> openDrawer(false, EdgeIndexSlots.RECENT_SLOT_INDEX)
+            ACTION_RELOAD_CONFIG -> { repository.rebuildFilteredCaches(); removeTrigger(); updateTriggerState() }
+            else -> updateTriggerState()
         }
         return START_STICKY
     }
 
-    private fun shouldSuppressTrigger(): Boolean {
-        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        if (prefs.disableInLandscape && isLandscape) return true
-        if (prefs.disableOnKeyboard && (isImeVisible || EdgeAccessibilityService.isImeWindowPresent)) return true
+    private fun updateTriggerState() {
+        val suppress = (prefs.disableInLandscape && resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) ||
+            (prefs.disableOnKeyboard && (isImeVisible || EdgeAccessibilityService.isImePresent)) ||
+            (EdgeAccessibilityService.foregroundPkg in prefs.blacklistPackages)
 
-        val fgPkg = EdgeAccessibilityService.currentForegroundPackage
-        if (!fgPkg.isNullOrBlank() && fgPkg in prefs.blacklistPackages) return true
-
-        return false
-    }
-
-    private fun updateTriggerVisibilityState() {
-        if (shouldSuppressTrigger()) {
+        if (suppress) {
             triggerView?.visibility = View.GONE
             return
         }
-        if (triggerView == null) {
-            setupTriggerHandle()
-        } else {
-            triggerView?.visibility = if (isDrawerOpen) View.INVISIBLE else View.VISIBLE
+        if (triggerView == null) setupTrigger() else {
+            triggerView?.visibility = View.VISIBLE
+            triggerView?.alpha = if (isDrawerOpen) 0f else 1f
             triggerView?.invalidate()
         }
     }
 
-    private fun startAsForeground() {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "EdgeDrawer Gesture", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "Mantiene attiva la gesture verticale A-Z"
-            }
-        )
-
-        val openAppIntent = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("EdgeDrawer attivo")
-            .setContentText("Scorri in alto o in basso sul bordo per aprire l'indice A-Z")
-            .setSmallIcon(android.R.drawable.ic_menu_sort_alphabetically)
-            .setContentIntent(openAppIntent)
-            .setOngoing(true)
-            .build()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
-    }
-
-    private fun setupTriggerHandle() {
-        if (triggerView != null) return
-
+    private fun setupTrigger() {
         val density = resources.displayMetrics.density
-        val screenW = resources.displayMetrics.widthPixels.toFloat()
-        val screenH = resources.displayMetrics.heightPixels.toFloat()
-        val m = EdgeBarMetrics.compute(screenW, screenH, density, prefs)
+        val m = EdgeBarMetrics.compute(resources.displayMetrics.widthPixels.toFloat(), resources.displayMetrics.heightPixels.toFloat(), density, prefs)
         val handle = EdgeTriggerView(this, prefs)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             handle.setOnApplyWindowInsetsListener { _, insets ->
                 isImeVisible = insets.isVisible(WindowInsets.Type.ime())
-                updateTriggerVisibilityState()
+                updateTriggerState()
                 insets
             }
         }
 
         val params = WindowManager.LayoutParams(
-            m.indexWidthPx.toInt(),
-            m.lettersHeightPx.toInt(),
+            m.indexWidthPx.toInt(), m.lettersHeightPx.toInt(),
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
@@ -324,139 +175,87 @@ class EdgeOverlayService : Service() {
             y = m.lettersTopY.toInt()
         }
 
-        var downX = 0f
-        var downY = 0f
-        var triggeredInThisTouch = false
-        var ignoredHorizontalGesture = false
-        val verticalTriggerThreshold = 8f * density
-        val horizontalCancelThreshold = 10f * density
-
-        handle.setOnTouchListener { _, event ->
-            val currentRawX = event.rawX
-            val currentRawY = event.rawY
-
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    downX = currentRawX
-                    downY = currentRawY
-                    triggeredInThisTouch = false
-                    ignoredHorizontalGesture = false
-                    true
-                }
+        var downX = 0f; var downY = 0f; var triggered = false; var ignored = false
+        handle.setOnTouchListener { _, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; triggered = false; ignored = false; true }
                 MotionEvent.ACTION_MOVE -> {
-                    if (ignoredHorizontalGesture) return@setOnTouchListener false
-
-                    if (!triggeredInThisTouch) {
-                        val dx = abs(currentRawX - downX)
-                        val dy = abs(currentRawY - downY)
-
-                        if (dx >= horizontalCancelThreshold && dx > dy * 0.85f) {
-                            ignoredHorizontalGesture = true
-                            return@setOnTouchListener false
+                    if (ignored) return@setOnTouchListener false
+                    if (!triggered) {
+                        val dx = abs(e.rawX - downX); val dy = abs(e.rawY - downY)
+                        if (dx >= 10f * density && dx > dy * 0.85f) { ignored = true; return@setOnTouchListener false }
+                        if (dy >= 8f * density && dy > dx * 1.45f) {
+                            triggered = true
+                            HapticHelper.trigger(this, prefs, HapticHelper.Pulse.TICK)
+                            openDrawer(true, handle.getSlotAtY(e.y))
+                            drawerView?.handleExternalDrag(e.rawX, e.rawY, MotionEvent.ACTION_MOVE)
                         }
-
-                        if (dy >= verticalTriggerThreshold && dy > dx * 1.45f) {
-                            triggeredInThisTouch = true
-                            HapticHelper.trigger(this, prefs, HapticHelper.PulseType.TICK)
-                            openDrawer(fromContinuousSwipe = true, initialSlot = handle.getSlotAtY(event.y))
-                        }
-                    } else {
-                        drawerView?.handleExternalDrag(currentRawX, currentRawY, MotionEvent.ACTION_MOVE)
-                    }
+                    } else drawerView?.handleExternalDrag(e.rawX, e.rawY, MotionEvent.ACTION_MOVE)
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (triggeredInThisTouch) {
-                        drawerView?.handleExternalDrag(currentRawX, currentRawY, event.actionMasked)
-                    }
-                    triggeredInThisTouch = false
-                    ignoredHorizontalGesture = false
-                    true
+                    if (triggered) drawerView?.handleExternalDrag(e.rawX, e.rawY, e.actionMasked)
+                    triggered = false; ignored = false; true
                 }
                 else -> false
             }
         }
-
         triggerView = handle
         windowManager.addView(handle, params)
     }
 
-    private fun removeTriggerHandle() {
-        triggerView?.let {
-            try {
-                windowManager.removeView(it)
-            } catch (_: Exception) {
-            }
-        }
+    private fun removeTrigger() {
+        triggerView?.let { runCatching { windowManager.removeView(it) } }
         triggerView = null
     }
 
-    private fun openDrawer(fromContinuousSwipe: Boolean, initialSlot: Int) {
+    private fun openDrawer(fromSwipe: Boolean, initialSlot: Int) {
         if (isDrawerOpen) return
         isDrawerOpen = true
-        triggerView?.visibility = View.INVISIBLE
+        triggerView?.alpha = 0f
 
         val overlay = EdgeDrawerView(
             context = this,
             repository = repository,
             prefs = prefs,
-            onLaunchApp = { appEntry, windowMode ->
-                launchViaProxy(appEntry.packageName, windowMode)
-                mainHandler.postDelayed({ closeDrawer() }, 70L)
+            onLaunchApp = { app, mode ->
+                runCatching {
+                    startActivity(Intent(this, WindowLaunchProxyActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
+                        putExtra(WindowLaunchProxyActivity.EXTRA_PKG, app.packageName)
+                        putExtra(WindowLaunchProxyActivity.EXTRA_MODE, mode.name)
+                    })
+                }
+                handler.postDelayed({ closeDrawer() }, 70L)
             },
             onToggleSide = {
                 prefs.isRightSide = !prefs.isRightSide
-                closeDrawer()
-                removeTriggerHandle()
-                updateTriggerVisibilityState()
-                openDrawer(fromContinuousSwipe = false, initialSlot = EdgeIndexSlots.RECENT_SLOT_INDEX)
+                closeDrawer(); removeTrigger(); updateTriggerState()
+                openDrawer(false, EdgeIndexSlots.RECENT_SLOT_INDEX)
             },
             onDismiss = { closeDrawer() }
         )
 
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
+        drawerView = overlay
+        windowManager.addView(overlay, WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
-        )
-
-        drawerView = overlay
-        windowManager.addView(overlay, params)
-        overlay.prepareOpen(fromContinuousSwipe, initialSlot)
+        ))
+        overlay.prepareOpen(fromSwipe, initialSlot)
     }
 
     private fun closeDrawer() {
-        val current = drawerView
+        val current = drawerView ?: return
         drawerView = null
         isDrawerOpen = false
-        updateTriggerVisibilityState()
-        if (current != null) {
-            try {
-                windowManager.removeView(current)
-            } catch (_: Exception) {
-            }
-        }
-    }
-
-    private fun launchViaProxy(packageName: String, mode: LaunchWindowMode) {
-        val proxyIntent = Intent(this, WindowLaunchProxyActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION)
-            putExtra(WindowLaunchProxyActivity.EXTRA_PKG, packageName)
-            putExtra(WindowLaunchProxyActivity.EXTRA_MODE, mode.name)
-        }
-        try {
-            startActivity(proxyIntent)
-        } catch (_: Exception) {
-        }
+        updateTriggerState()
+        runCatching { windowManager.removeView(current) }
     }
 
     override fun onDestroy() {
-        closeDrawer()
-        removeTriggerHandle()
-        repository.stopListening()
-        super.onDestroy()
+        closeDrawer(); removeTrigger(); repository.stopListening(); super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -464,53 +263,28 @@ class EdgeOverlayService : Service() {
 
 class EdgeAccessibilityService : AccessibilityService() {
     companion object {
-        @Volatile
-        var instance: EdgeAccessibilityService? = null
-
-        @Volatile
-        var currentForegroundPackage: String? = null
-
-        @Volatile
-        var isImeWindowPresent: Boolean = false
+        @Volatile var instance: EdgeAccessibilityService? = null
+        @Volatile var foregroundPkg: String? = null
+        @Volatile var isImePresent: Boolean = false
     }
 
-    override fun onServiceConnected() {
-        super.onServiceConnected()
-        instance = this
-    }
-
+    override fun onServiceConnected() { instance = this }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        val pkg = event?.packageName?.toString()
-        if (!pkg.isNullOrBlank() && pkg != packageName) {
-            currentForegroundPackage = pkg
-        }
-        val imeNow = windows?.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } == true
-        if (imeNow != isImeWindowPresent || event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            isImeWindowPresent = imeNow
-            try {
-                startService(Intent(this, EdgeOverlayService::class.java).apply {
-                    action = EdgeOverlayService.ACTION_CONTEXT_CHANGED
-                })
-            } catch (_: Exception) {
-            }
+        event?.packageName?.toString()?.takeIf { it != packageName }?.let { foregroundPkg = it }
+        val ime = windows?.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } == true
+        if (ime != isImePresent || event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            isImePresent = ime
+            runCatching { startService(Intent(this, EdgeOverlayService::class.java).setAction(EdgeOverlayService.ACTION_CONTEXT_CHANGED)) }
         }
     }
-
     override fun onInterrupt() {}
-
-    override fun onDestroy() {
-        instance = null
-        super.onDestroy()
-    }
+    override fun onDestroy() { instance = null; super.onDestroy() }
 }
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
-            val prefs = PrefsManager(context)
-            if (prefs.isServiceEnabled && Settings.canDrawOverlays(context)) {
-                ContextCompat.startForegroundService(context, Intent(context, EdgeOverlayService::class.java))
-            }
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED && PrefsManager(context).isServiceEnabled && Settings.canDrawOverlays(context)) {
+            ContextCompat.startForegroundService(context, Intent(context, EdgeOverlayService::class.java))
         }
     }
 }
