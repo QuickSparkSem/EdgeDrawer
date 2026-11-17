@@ -21,7 +21,6 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
-import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import androidx.core.app.NotificationCompat
@@ -123,11 +122,6 @@ class EdgeOverlayService : Service() {
         }
     }
 
-    /**
-     * Posiziona il trigger esattamente allineato alla stessa posizione verticale e altezza
-     * dell'alfabeto del pannello, attivandosi con uno scorrimento verticale (alto/basso)
-     * così da non cozzare mai con la gesture Indietro di sistema.
-     */
     private fun setupTriggerHandle() {
         if (triggerView != null) return
 
@@ -166,19 +160,21 @@ class EdgeOverlayService : Service() {
 
         var downY = 0f
         var triggeredInThisTouch = false
-        val verticalTriggerThreshold = 8f * density
+        val verticalTriggerThreshold = 6f * density
 
         handle.setOnTouchListener { _, event ->
-            when (event.action) {
+            val currentRawX = event.rawX
+            val currentRawY = event.rawY
+
+            when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    downY = event.rawY
+                    downY = currentRawY
                     triggeredInThisTouch = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     if (!triggeredInThisTouch) {
-                        val dy = abs(event.rawY - downY)
-                        // Attivazione tramite scorrimento verticale (su/giù) lungo il bordo
+                        val dy = abs(currentRawY - downY)
                         if (dy >= verticalTriggerThreshold) {
                             triggeredInThisTouch = true
                             handle.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
@@ -186,25 +182,25 @@ class EdgeOverlayService : Service() {
                             openDrawer(
                                 fromContinuousSwipe = true,
                                 initialSlot = startSlot,
-                                initialRawY = event.rawY
+                                initialRawY = currentRawY
                             )
                         }
                     } else {
-                        drawerView?.handleExternalDrag(event.rawX, event.rawY, MotionEvent.ACTION_MOVE)
+                        // Continua a inoltrare ogni singolo movimento senza staccare il dito
+                        drawerView?.handleExternalDrag(currentRawX, currentRawY, MotionEvent.ACTION_MOVE)
                     }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (triggeredInThisTouch) {
-                        drawerView?.handleExternalDrag(event.rawX, event.rawY, event.action)
+                        drawerView?.handleExternalDrag(currentRawX, currentRawY, event.actionMasked)
                     } else {
-                        // Tocco rapido su una lettera del bordo -> apre su quella lettera
                         handle.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                         val tappedSlot = handle.getSlotAtY(event.y)
                         openDrawer(
                             fromContinuousSwipe = false,
                             initialSlot = tappedSlot,
-                            initialRawY = event.rawY
+                            initialRawY = currentRawY
                         )
                     }
                     triggeredInThisTouch = false
@@ -236,8 +232,8 @@ class EdgeOverlayService : Service() {
         if (isDrawerOpen) return
         isDrawerOpen = true
 
-        // Nasconde il trigger sottostante mentre il pannello è aperto per evitare due alfabeti sovrapposti
-        triggerView?.visibility = View.INVISIBLE
+        // Usa alpha = 0f invece di INVISIBLE così il flusso touch continuo non viene mai interrotto da Android
+        triggerView?.alpha = 0f
 
         val overlay = EdgeDrawerView(
             context = this,
@@ -279,16 +275,15 @@ class EdgeOverlayService : Service() {
             windowManager.updateViewLayout(overlay, params)
         }
 
-        overlay.post {
-            overlay.prepareOpen(fromContinuousSwipe, initialSlot, initialRawY)
-        }
+        // Inizializza subito lo stato senza attendere il frame successivo
+        overlay.prepareOpen(fromContinuousSwipe, initialSlot, initialRawY)
     }
 
     private fun closeDrawer() {
         val current = drawerView
         drawerView = null
         isDrawerOpen = false
-        triggerView?.visibility = View.VISIBLE
+        triggerView?.alpha = 1f
         if (current != null) {
             try {
                 windowManager.removeView(current)
