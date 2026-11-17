@@ -125,42 +125,32 @@ class EdgeOverlayService : Service() {
         if (triggerView != null) return
 
         val density = resources.displayMetrics.density
-        val screenH = resources.displayMetrics.heightPixels
-        val scale = (prefs.panelScalePercent / 100f).coerceIn(0.65f, 1.35f)
+        val screenW = resources.displayMetrics.widthPixels.toFloat()
+        val screenH = resources.displayMetrics.heightPixels.toFloat()
 
-        val widthPx = ((prefs.triggerWidthDp * density).coerceAtLeast(24f * density) * scale).toInt()
-        val heightRatio = (prefs.barHeightPercent / 100f).coerceIn(0.30f, 0.90f)
-        val lettersHeightPx = (screenH * heightRatio).toInt()
-
-        val pad = 6f * density
-        val letterStepH = (lettersHeightPx - pad * 2f) / EdgeIndexSlots.LETTERS.size
-        val totalBarHeightPx = (pad * 2f + letterStepH * EdgeIndexSlots.TOTAL_SLOTS).toInt()
-        val colorsOffsetPx = (letterStepH * EdgeIndexSlots.COLORS.size).toInt()
-
-        val topSafeMargin = (28f * density).toInt()
-        val bottomSafeMargin = (16f * density).toInt()
-        val availableSpan = (screenH - topSafeMargin - bottomSafeMargin - totalBarHeightPx).coerceAtLeast(0)
-        val posRatio = (prefs.verticalPositionPercent / 100f).coerceIn(0f, 1f)
-        val barTopY = topSafeMargin + (availableSpan * posRatio).toInt()
-
+        val m = EdgeBarMetrics.compute(screenW, screenH, density, prefs)
         val handle = EdgeTriggerView(this, prefs)
 
         val params = WindowManager.LayoutParams(
-            widthPx,
-            lettersHeightPx,
+            m.indexWidthPx.toInt(),
+            m.lettersHeightPx.toInt(),
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = (if (prefs.isRightSide) Gravity.END else Gravity.START) or Gravity.TOP
-            x = (6f * density).toInt()
-            y = barTopY + colorsOffsetPx
+            // Attaccato al bordo dello schermo
+            x = m.edgeMarginPx.toInt()
+            y = m.lettersTopY.toInt()
         }
 
+        var downX = 0f
         var downY = 0f
         var triggeredInThisTouch = false
-        val verticalTriggerThreshold = 6f * density
+        var ignoredHorizontalGesture = false
+        val verticalTriggerThreshold = 8f * density
+        val horizontalCancelThreshold = 10f * density
 
         handle.setOnTouchListener { _, event ->
             val currentRawX = event.rawX
@@ -168,14 +158,27 @@ class EdgeOverlayService : Service() {
 
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    downX = currentRawX
                     downY = currentRawY
                     triggeredInThisTouch = false
+                    ignoredHorizontalGesture = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    if (ignoredHorizontalGesture) return@setOnTouchListener false
+
                     if (!triggeredInThisTouch) {
+                        val dx = abs(currentRawX - downX)
                         val dy = abs(currentRawY - downY)
-                        if (dy >= verticalTriggerThreshold) {
+
+                        // Se lo scorrimento è orizzontale (gesture Indietro destra/sinistra), non attivare il trigger
+                        if (dx >= horizontalCancelThreshold && dx > dy * 0.85f) {
+                            ignoredHorizontalGesture = true
+                            return@setOnTouchListener false
+                        }
+
+                        // Si attiva solo se si scorre chiaramente in verticale (su o giù)
+                        if (dy >= verticalTriggerThreshold && dy > dx * 1.45f) {
                             triggeredInThisTouch = true
                             HapticHelper.trigger(this, prefs, HapticHelper.PulseType.TICK)
                             val startSlot = handle.getSlotAtY(event.y)
@@ -193,16 +196,10 @@ class EdgeOverlayService : Service() {
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (triggeredInThisTouch) {
                         drawerView?.handleExternalDrag(currentRawX, currentRawY, event.actionMasked)
-                    } else {
-                        HapticHelper.trigger(this, prefs, HapticHelper.PulseType.TICK)
-                        val tappedSlot = handle.getSlotAtY(event.y)
-                        openDrawer(
-                            fromContinuousSwipe = false,
-                            initialSlot = tappedSlot,
-                            initialRawY = currentRawY
-                        )
                     }
+                    // Se era uno swipe orizzontale o un tocco accidentale senza scorrimento verticale, non apre nulla
                     triggeredInThisTouch = false
+                    ignoredHorizontalGesture = false
                     true
                 }
                 else -> false
@@ -238,7 +235,6 @@ class EdgeOverlayService : Service() {
             repository = repository,
             prefs = prefs,
             onLaunchApp = { appEntry, windowMode ->
-                // Avvia prima l'app mentre l'overlay è ancora visibile (evita il blocco background Android 14+)
                 launchTargetApp(appEntry.packageName, windowMode)
                 mainHandler.postDelayed({ closeDrawer() }, 70L)
             },
@@ -332,7 +328,6 @@ class EdgeOverlayService : Service() {
                     putExtra("android.activity.launchBounds", popupBounds)
                 }
 
-                // Tenta prima WINDOWING_MODE_FREEFORM (5), con fallback diretto in caso di restrizione OEM
                 val freeformOptions = createWindowModeOptions(windowingMode = 5, bounds = popupBounds)
                 try {
                     startActivity(popupIntent, freeformOptions.toBundle())
@@ -353,8 +348,6 @@ class EdgeOverlayService : Service() {
                 val topBounds = Rect(0, 0, screenW, screenH / 2)
 
                 if (acc != null) {
-                    // Attiva prima lo split-screen sull'app attualmente aperta in primo piano,
-                    // poi lancia la nuova app nello slot adiacente
                     acc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
                     mainHandler.postDelayed({
                         val splitIntent = Intent(baseIntent).apply {
