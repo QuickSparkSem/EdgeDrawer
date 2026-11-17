@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.EdgeDrawer" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">#4D94FF</item>
+        <item name="android:statusBarColor">#0F1117</item>
+        <item name="android:navigationBarColor">#0F1117</item>
+    </style>
+</resources>
