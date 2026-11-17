@@ -7,105 +7,208 @@ import android.view.MotionEvent
 import android.view.View
 import kotlin.math.abs
 
+/**
+ * Trigger laterale trasparente che mostra direttamente l'alfabeto (↓, A-Z)
+ * con leggera ombra, ridimensionabile e posizionabile anche piccolo nell'angolo in basso.
+ */
+class EdgeTriggerView(
+    context: Context,
+    private val prefs: PrefsManager
+) : View(context) {
+
+    companion object {
+        val INDEX_ITEMS: List<Char> = listOf('★') + ('A'..'Z').toList()
+    }
+
+    private val density = resources.displayMetrics.density
+    private fun dp(v: Float): Float = v * density
+
+    private val letterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        setShadowLayer(dp(2.5f), 0f, dp(1f), Color.argb(210, 0, 0, 0))
+    }
+
+    init {
+        setLayerType(LAYER_TYPE_HARDWARE, null)
+    }
+
+    fun getLetterAtY(localY: Float): Char {
+        if (height <= 0) return '★'
+        val pad = dp(6f)
+        val usableH = (height - pad * 2f).coerceAtLeast(1f)
+        val clamped = (localY - pad).coerceIn(0f, usableH - 0.1f)
+        val idx = ((clamped / usableH) * INDEX_ITEMS.size).toInt()
+            .coerceIn(0, INDEX_ITEMS.lastIndex)
+        return INDEX_ITEMS[idx]
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        if (prefs.isTriggerHidden || prefs.triggerAlphaPercent <= 0) return
+
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) return
+
+        val pad = dp(6f)
+        val usableH = (h - pad * 2f).coerceAtLeast(1f)
+        val stepH = usableH / INDEX_ITEMS.size
+
+        val alphaInt = ((prefs.triggerAlphaPercent / 100f) * 255).toInt().coerceIn(0, 255)
+        letterPaint.color = Color.argb(alphaInt, 255, 255, 255)
+        letterPaint.setShadowLayer(dp(2.5f), 0f, dp(1f), Color.argb((alphaInt * 0.85f).toInt(), 0, 0, 0))
+
+        // Adatta la dimensione del testo se l'utente lo rimpicciolisce nell'angolo
+        val computedSize = (stepH * 0.72f).coerceIn(dp(6.5f), dp(11.5f))
+        letterPaint.textSize = computedSize
+
+        val cx = w / 2f
+        val textOffset = (letterPaint.descent() + letterPaint.ascent()) / 2f
+
+        for (i in INDEX_ITEMS.indices) {
+            val ch = INDEX_ITEMS[i]
+            val cy = pad + stepH * (i + 0.5f)
+            val label = if (ch == '★') "↓" else ch.toString()
+            canvas.drawText(label, cx, cy - textOffset, letterPaint)
+        }
+    }
+}
+
+/**
+ * Pannello laterale fluido con indice A-Z, pallini colore diretti in basso
+ * e menu rapido tenendo il dito su un'app (Pop-up / Metà sopra / Metà sotto).
+ */
 class EdgeDrawerView(
     context: Context,
     private val repository: AppRepository,
     private val prefs: PrefsManager,
-    private val onLaunchApp: (AppEntry) -> Unit,
+    private val onLaunchApp: (AppEntry, LaunchWindowMode) -> Unit,
     private val onDismiss: () -> Unit
 ) : View(context) {
 
     companion object {
-        // '★' rappresenta il cassetto delle app installate di recente prima della 'A'
         private val INDEX_ITEMS: List<Char> = listOf('★') + ('A'..'Z').toList()
+        private val WINDOW_OPTIONS = listOf(
+            LaunchWindowMode.POPUP,
+            LaunchWindowMode.SPLIT_TOP,
+            LaunchWindowMode.SPLIT_BOTTOM
+        )
+        private const val HOLD_DELAY_MS = 380L
     }
 
     private var selectedIndexItem: Char = '★'
     private var activeColorFilter: AppColorFilter = AppColorFilter.ALL
-    private var isColorFolderOpen: Boolean = false
     private var displayedApps: List<AppEntry> = emptyList()
     private var hoveredAppIndex: Int = -1
     private var scrollOffsetY: Float = 0f
 
-    // Rettangoli per hit-testing rapido
-    private val indexBarRect = RectF()
-    private val indexItemRects = mutableListOf<Pair<Char, RectF>>()
-    private val appItemRects = mutableListOf<Pair<AppEntry, RectF>>()
-    private val colorButtonRect = RectF()
-    private val colorFolderRect = RectF()
-    private val colorOptionRects = mutableListOf<Pair<AppColorFilter, RectF>>()
+    // Animazione fluida zoom icone (senza allocazioni in onDraw)
+    private var currentHoverScale: Float = 1.0f
+    private var lastAnimatedAppIndex: Int = -1
 
-    // Stato touch per supportare sia "trascina e rilascia" sia "alza il dito e clicca"
+    // Menu tenuta su app (Pop-up / Metà sopra / Metà sotto)
+    private var isWindowMenuVisible: Boolean = false
+    private var windowMenuAppIndex: Int = -1
+    private var hoveredWindowOptionIndex: Int = -1
+    private var holdAnchorX: Float = 0f
+    private var holdAnchorY: Float = 0f
+
+    // Rettangoli pre-allocati per hit-testing a zero allocazioni
+    private val indexBarRect = RectF()
+    private val indexItemRects = Array(INDEX_ITEMS.size) { RectF() }
+    private val colorDotRects = Array(AppColorFilter.entries.size) { RectF() }
+    private val windowOptionRects = Array(WINDOW_OPTIONS.size) { RectF() }
+    private val appItemRects = mutableListOf<Pair<AppEntry, RectF>>()
+    private val tempRect = RectF()
+
     private var isContinuousGestureFromEdge = false
     private var lastTouchY = 0f
-    private var lastTouchX = 0f
     private var isScrollingAppList = false
 
     private val density = resources.displayMetrics.density
     private fun dp(value: Float): Float = value * density
 
-    // Paint objects
-    private val dimBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(185, 11, 13, 19)
-    }
-
-    private val panelGlassPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(215, 22, 26, 36)
-    }
-
+    // Oggetti Paint pre-allocati
+    private val dimBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val panelGlassPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val panelBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = dp(1f)
-        color = Color.argb(55, 255, 255, 255)
     }
-
     private val indexTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
-        textSize = dp(11.5f)
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
-
     private val activePillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#4D94FF")
     }
-
     private val headerLetterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        textSize = dp(20f)
+        textAlign = Paint.Align.CENTER
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
-
     private val appLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
-        textSize = dp(11f)
         textAlign = Paint.Align.CENTER
-        setShadowLayer(dp(3f), 0f, dp(1f), Color.argb(200, 0, 0, 0))
+        setShadowLayer(dp(3f), 0f, dp(1f), Color.argb(210, 0, 0, 0))
     }
-
-    private val hoverHighlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(70, 77, 148, 255)
-    }
-
-    private val folderBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(242, 28, 33, 46)
-    }
-
-    private val folderTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val dotRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = dp(2f)
         color = Color.WHITE
-        textSize = dp(12.5f)
+    }
+    private val menuBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(242, 24, 29, 42)
+    }
+    private val menuHighlightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#4D94FF")
+    }
+    private val menuTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        textAlign = Paint.Align.CENTER
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
+    private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
-    fun prepareOpen(fromContinuousSwipe: Boolean, initialY: Float) {
+    private val holdRunnable = Runnable {
+        if (hoveredAppIndex in displayedApps.indices && !isScrollingAppList) {
+            isWindowMenuVisible = true
+            windowMenuAppIndex = hoveredAppIndex
+            hoveredWindowOptionIndex = -1
+            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            invalidate()
+        }
+    }
+
+    init {
+        setLayerType(LAYER_TYPE_HARDWARE, null)
+        applyVisualPrefs()
+    }
+
+    private fun applyVisualPrefs() {
+        val alphaRatio = (prefs.panelAlphaPercent / 100f).coerceIn(0.15f, 1f)
+        dimBgPaint.color = Color.argb((180 * alphaRatio).toInt(), 11, 13, 19)
+        panelGlassPaint.color = Color.argb((225 * alphaRatio).toInt(), 22, 26, 36)
+        panelBorderPaint.color = Color.argb((60 * alphaRatio).toInt(), 255, 255, 255)
+    }
+
+    fun prepareOpen(fromContinuousSwipe: Boolean, initialLetter: Char, initialY: Float) {
+        applyVisualPrefs()
         isContinuousGestureFromEdge = fromContinuousSwipe
-        isColorFolderOpen = false
+        cancelHoldTimer()
         hoveredAppIndex = -1
+        currentHoverScale = 1.0f
         scrollOffsetY = 0f
+
+        selectedIndexItem = initialLetter
+        refreshDisplayedApps()
         if (width > 0 && height > 0) {
-            selectIndexByY(initialY)
-        } else {
-            selectedIndexItem = '★'
-            refreshDisplayedApps()
+            computeStaticGeometry(width.toFloat(), height.toFloat())
+            if (initialLetter == '★') {
+                selectIndexByY(initialY, haptic = false)
+            }
         }
         invalidate()
     }
@@ -119,21 +222,43 @@ class EdgeDrawerView(
         }
     }
 
-    private fun selectIndexByY(y: Float) {
-        if (indexItemRects.isEmpty()) return
-        val clampedY = y.coerceIn(indexBarRect.top + dp(4f), indexBarRect.bottom - dp(4f))
-        val found = indexItemRects.minByOrNull { abs(it.second.centerY() - clampedY) }?.first
-        if (found != null && found != selectedIndexItem) {
+    private fun scheduleHoldTimer(appIdx: Int, x: Float, y: Float) {
+        if (isWindowMenuVisible && windowMenuAppIndex == appIdx) return
+        cancelHoldTimer()
+        holdAnchorX = x
+        holdAnchorY = y
+        postDelayed(holdRunnable, HOLD_DELAY_MS)
+    }
+
+    private fun cancelHoldTimer() {
+        removeCallbacks(holdRunnable)
+        if (isWindowMenuVisible) {
+            isWindowMenuVisible = false
+            windowMenuAppIndex = -1
+            hoveredWindowOptionIndex = -1
+        }
+    }
+
+    private fun selectIndexByY(y: Float, haptic: Boolean = true) {
+        if (indexBarRect.height() <= 0f) return
+        val clampedY = y.coerceIn(indexBarRect.top + dp(2f), indexBarRect.bottom - dp(2f))
+        val ratio = ((clampedY - indexBarRect.top) / indexBarRect.height()).coerceIn(0f, 0.999f)
+        val idx = (ratio * INDEX_ITEMS.size).toInt().coerceIn(0, INDEX_ITEMS.lastIndex)
+        val found = INDEX_ITEMS[idx]
+        if (found != selectedIndexItem) {
             selectedIndexItem = found
             hoveredAppIndex = -1
+            cancelHoldTimer()
             refreshDisplayedApps()
-            performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            if (haptic) {
+                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            }
         }
     }
 
     /**
-     * Gestisce il trascinamento continuo iniziato dal bordo dello schermo prima ancora
-     * che l'utente stacchi il dito.
+     * Gestisce il trascinamento continuo dal bordo senza staccare il dito:
+     * funziona su indice A-Z, sui pallini colore in basso, sulle app e sul menu tenuta!
      */
     fun handleExternalDrag(rawX: Float, rawY: Float, action: Int) {
         val loc = IntArray(2)
@@ -144,33 +269,14 @@ class EdgeDrawerView(
         when (action) {
             MotionEvent.ACTION_MOVE -> {
                 isContinuousGestureFromEdge = true
-                // Se il dito è sopra l'indice verticale, cambia lettera
-                if (isInIndexZone(localX)) {
-                    hoveredAppIndex = -1
-                    selectIndexByY(localY)
-                } else {
-                    // Se il dito si sposta nella colonna app, evidenzia l'app sotto il dito
-                    val appIdx = findAppIndexAt(localX, localY)
-                    if (appIdx != hoveredAppIndex) {
-                        hoveredAppIndex = appIdx
-                        if (appIdx != -1) {
-                            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                        }
-                    }
-                }
+                processPointerMove(localX, localY)
                 invalidate()
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (isContinuousGestureFromEdge) {
-                    val appIdx = findAppIndexAt(localX, localY)
-                    if (appIdx in displayedApps.indices) {
-                        val target = displayedApps[appIdx]
-                        performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                        onLaunchApp(target)
-                        return
-                    }
+                    if (tryExecuteReleaseAction(localX, localY)) return
                 }
-                // Se l'utente alza il dito senza essere sopra un'app, il pannello resta aperto!
+                cancelHoldTimer()
                 isContinuousGestureFromEdge = false
                 hoveredAppIndex = -1
                 invalidate()
@@ -178,11 +284,109 @@ class EdgeDrawerView(
         }
     }
 
+    private fun processPointerMove(x: Float, y: Float) {
+        // 1. Se il menu Pop-up / Metà schermo è visibile, controlla se il dito è su una delle 3 opzioni
+        if (isWindowMenuVisible) {
+            val optIdx = findWindowOptionAt(x, y)
+            if (optIdx != hoveredWindowOptionIndex) {
+                hoveredWindowOptionIndex = optIdx
+                if (optIdx != -1) {
+                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                }
+            }
+            // Se il dito resta sull'app di origine o sulle opzioni, mantieni il menu aperto
+            val stillOnOriginApp = windowMenuAppIndex in appItemRects.indices &&
+                appItemRects[windowMenuAppIndex].second.contains(x, y)
+            if (optIdx != -1 || stillOnOriginApp) {
+                return
+            }
+            // Se il dito si sposta lontano verso l'indice o un'altra zona, chiudi il menu
+            cancelHoldTimer()
+        }
+
+        // 2. Controlla se il dito passa sopra uno dei pallini colore in basso (senza staccare!)
+        val colorHit = findColorDotAt(x, y)
+        if (colorHit != null) {
+            cancelHoldTimer()
+            hoveredAppIndex = -1
+            if (colorHit != activeColorFilter) {
+                activeColorFilter = colorHit
+                refreshDisplayedApps()
+                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            }
+            return
+        }
+
+        // 3. Controlla se il dito è nella fascia dell'indice verticale A-Z
+        if (isInIndexZone(x)) {
+            cancelHoldTimer()
+            hoveredAppIndex = -1
+            selectIndexByY(y, haptic = true)
+            return
+        }
+
+        // 4. Controlla se il dito è sopra un'app
+        val appIdx = findAppIndexAt(x, y)
+        if (appIdx != hoveredAppIndex) {
+            hoveredAppIndex = appIdx
+            if (appIdx != -1) {
+                lastAnimatedAppIndex = appIdx
+                currentHoverScale = 1.02f
+                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                scheduleHoldTimer(appIdx, x, y)
+            } else {
+                cancelHoldTimer()
+            }
+        } else if (appIdx != -1) {
+            // Se il dito si muove troppo velocemente sull'icona, riavvia il timer di tenuta
+            if (abs(x - holdAnchorX) > dp(14f) || abs(y - holdAnchorY) > dp(14f)) {
+                scheduleHoldTimer(appIdx, x, y)
+            }
+        }
+    }
+
+    private fun tryExecuteReleaseAction(x: Float, y: Float): Boolean {
+        // Caso A: Menu Pop-up / Metà sopra / Metà sotto aperto
+        if (isWindowMenuVisible && windowMenuAppIndex in displayedApps.indices) {
+            val targetApp = displayedApps[windowMenuAppIndex]
+            val optIdx = findWindowOptionAt(x, y)
+            if (optIdx in WINDOW_OPTIONS.indices) {
+                val chosenMode = WINDOW_OPTIONS[optIdx]
+                cancelHoldTimer()
+                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                onLaunchApp(targetApp, chosenMode)
+                return true
+            }
+            // Se rilascia ancora sopra l'app stessa -> avvio normale
+            if (windowMenuAppIndex in appItemRects.indices &&
+                appItemRects[windowMenuAppIndex].second.contains(x, y)
+            ) {
+                cancelHoldTimer()
+                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                onLaunchApp(targetApp, LaunchWindowMode.NORMAL)
+                return true
+            }
+            cancelHoldTimer()
+            return false
+        }
+
+        // Caso B: Rilascio diretto sopra un'app -> avvio normale
+        val appIdx = findAppIndexAt(x, y)
+        if (appIdx in displayedApps.indices) {
+            val target = displayedApps[appIdx]
+            cancelHoldTimer()
+            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            onLaunchApp(target, LaunchWindowMode.NORMAL)
+            return true
+        }
+        return false
+    }
+
     private fun isInIndexZone(x: Float): Boolean {
         return if (prefs.isRightSide) {
-            x >= indexBarRect.left - dp(12f)
+            x >= indexBarRect.left - dp(10f)
         } else {
-            x <= indexBarRect.right + dp(12f)
+            x <= indexBarRect.right + dp(10f)
         }
     }
 
@@ -195,95 +399,108 @@ class EdgeDrawerView(
         return -1
     }
 
+    private fun findColorDotAt(x: Float, y: Float): AppColorFilter? {
+        val filters = AppColorFilter.entries
+        for (i in filters.indices) {
+            if (colorDotRects[i].contains(x, y)) {
+                return filters[i]
+            }
+        }
+        return null
+    }
+
+    private fun findWindowOptionAt(x: Float, y: Float): Int {
+        for (i in windowOptionRects.indices) {
+            if (windowOptionRects[i].contains(x, y)) {
+                return i
+            }
+        }
+        return -1
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val x = event.x
         val y = event.y
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
-                lastTouchX = x
                 lastTouchY = y
                 isScrollingAppList = false
 
-                // 1. Se la cartella colori è aperta, controlla clic su un colore o chiusura cartella
-                if (isColorFolderOpen) {
-                    val chosenColor = colorOptionRects.firstOrNull { it.second.contains(x, y) }?.first
-                    if (chosenColor != null) {
-                        activeColorFilter = chosenColor
-                        isColorFolderOpen = false
-                        refreshDisplayedApps()
-                        performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                        invalidate()
-                        return true
-                    } else if (!colorFolderRect.contains(x, y)) {
-                        isColorFolderOpen = false
-                        invalidate()
-                        return true
-                    }
-                }
-
-                // 2. Clic sul pulsante cartella colori in basso
-                if (colorButtonRect.contains(x, y)) {
-                    isColorFolderOpen = !isColorFolderOpen
+                // 1. Tocco diretto su un pallino colore in basso
+                val colorHit = findColorDotAt(x, y)
+                if (colorHit != null) {
+                    cancelHoldTimer()
+                    activeColorFilter = colorHit
+                    refreshDisplayedApps()
                     performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
                     invalidate()
                     return true
                 }
 
-                // 3. Tocco sull'indice A-Z / Recenti
+                // 2. Tocco sull'indice A-Z
                 if (indexBarRect.contains(x, y)) {
-                    isColorFolderOpen = false
-                    selectIndexByY(y)
+                    cancelHoldTimer()
+                    selectIndexByY(y, haptic = true)
                     invalidate()
                     return true
                 }
 
-                // 4. Tocco su un'app nella colonna verticale
+                // 3. Tocco su un'app
                 val appIdx = findAppIndexAt(x, y)
                 if (appIdx != -1) {
                     hoveredAppIndex = appIdx
+                    lastAnimatedAppIndex = appIdx
+                    currentHoverScale = 1.02f
+                    scheduleHoldTimer(appIdx, x, y)
                     invalidate()
                     return true
                 }
 
-                // 5. Tocco sullo sfondo esterno -> chiudi pannello
+                // 4. Tocco fuori -> chiudi
+                cancelHoldTimer()
                 onDismiss()
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
-                if (indexBarRect.contains(x, y) || isInIndexZone(x)) {
-                    hoveredAppIndex = -1
-                    selectIndexByY(y)
+                if (isWindowMenuVisible) {
+                    processPointerMove(x, y)
+                    invalidate()
+                    return true
+                }
+
+                val colorHit = findColorDotAt(x, y)
+                if (colorHit != null || isInIndexZone(x)) {
+                    isScrollingAppList = false
+                    processPointerMove(x, y)
                     invalidate()
                     return true
                 }
 
                 val dy = y - lastTouchY
-                if (abs(dy) > dp(8f) && displayedApps.size > 6) {
+                if (!isWindowMenuVisible && abs(dy) > dp(10f) && displayedApps.size > 6) {
                     isScrollingAppList = true
+                    cancelHoldTimer()
                     hoveredAppIndex = -1
-                    scrollOffsetY = (scrollOffsetY + dy).coerceIn(-dp(400f), 0f)
+                    scrollOffsetY = (scrollOffsetY + dy).coerceIn(-dp(420f), 0f)
                     lastTouchY = y
                     invalidate()
                     return true
                 }
 
-                val appIdx = findAppIndexAt(x, y)
-                if (appIdx != hoveredAppIndex) {
-                    hoveredAppIndex = appIdx
+                if (!isScrollingAppList) {
+                    processPointerMove(x, y)
                     invalidate()
                 }
                 return true
             }
 
-            MotionEvent.ACTION_UP -> {
-                if (!isScrollingAppList && hoveredAppIndex in displayedApps.indices) {
-                    val target = displayedApps[hoveredAppIndex]
-                    performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                    onLaunchApp(target)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (!isScrollingAppList && tryExecuteReleaseAction(x, y)) {
                     return true
                 }
+                cancelHoldTimer()
                 hoveredAppIndex = -1
                 isScrollingAppList = false
                 invalidate()
@@ -293,44 +510,96 @@ class EdgeDrawerView(
         return super.onTouchEvent(event)
     }
 
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w > 0 && h > 0) {
+            computeStaticGeometry(w.toFloat(), h.toFloat())
+        }
+    }
+
+    private fun computeStaticGeometry(w: Float, h: Float) {
+        val scale = (prefs.panelScalePercent / 100f).coerceIn(0.65f, 1.35f)
+        val isRight = prefs.isRightSide
+
+        val edgeMargin = dp(8f)
+        val indexWidth = dp(32f) * scale
+        val appColWidth = dp(84f) * scale
+        val topPadding = dp(48f)
+        val bottomPadding = dp(32f)
+
+        val indexLeft = if (isRight) w - edgeMargin - indexWidth else edgeMargin
+        val indexRight = indexLeft + indexWidth
+        indexBarRect.set(indexLeft, topPadding, indexRight, h - bottomPadding)
+
+        val itemHeight = indexBarRect.height() / INDEX_ITEMS.size
+        for (i in INDEX_ITEMS.indices) {
+            val top = indexBarRect.top + i * itemHeight
+            indexItemRects[i].set(indexBarRect.left, top, indexBarRect.right, top + itemHeight)
+        }
+
+        // Posiziona la griglia dei 7 pallini colore in basso nella colonna app
+        val colLeft = if (isRight) indexLeft - dp(10f) - appColWidth else indexRight + dp(10f)
+        val colCenterX = colLeft + appColWidth / 2f
+
+        val dotRadius = dp(9f) * scale
+        val dotSpacingX = dp(23f) * scale
+        val dotSpacingY = dp(24f) * scale
+        val bottomRowY = h - bottomPadding - dotRadius - dp(4f)
+        val topRowY = bottomRowY - dotSpacingY
+
+        // Fila superiore: 4 pallini (Tutti, Rosso, Giallo, Verde)
+        // Fila inferiore: 3 pallini (Blu, Viola, Bianco/Nero)
+        val hitPad = dp(4f)
+        for (i in 0 until 4) {
+            val cx = colCenterX + (i - 1.5f) * dotSpacingX
+            colorDotRects[i].set(
+                cx - dotRadius - hitPad,
+                topRowY - dotRadius - hitPad,
+                cx + dotRadius + hitPad,
+                topRowY + dotRadius + hitPad
+            )
+        }
+        for (i in 4 until AppColorFilter.entries.size) {
+            val colIdx = i - 4
+            val cx = colCenterX + (colIdx - 1.0f) * dotSpacingX
+            colorDotRects[i].set(
+                cx - dotRadius - hitPad,
+                bottomRowY - dotRadius - hitPad,
+                cx + dotRadius + hitPad,
+                bottomRowY + dotRadius + hitPad
+            )
+        }
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val w = width.toFloat()
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
 
-        // Sfondo oscurato/blur
+        // 1. Sfondo oscurato/blur
         canvas.drawRect(0f, 0f, w, h, dimBgPaint)
 
+        val scale = (prefs.panelScalePercent / 100f).coerceIn(0.65f, 1.35f)
         val isRight = prefs.isRightSide
-        val edgeMargin = dp(8f)
-        val indexWidth = dp(34f)
-        val appColWidth = dp(86f)
-        val topPadding = dp(52f)
-        val bottomPadding = dp(36f)
+        val showLabels = prefs.showAppLabels
 
-        // Posizionamento indice verticale (Destra o Sinistra)
-        val indexLeft = if (isRight) w - edgeMargin - indexWidth else edgeMargin
-        val indexRight = indexLeft + indexWidth
-        indexBarRect.set(indexLeft, topPadding, indexRight, h - bottomPadding)
+        // 2. Pillola indice verticale A-Z
+        val pillRadius = indexBarRect.width() / 2f
+        canvas.drawRoundRect(indexBarRect, pillRadius, pillRadius, panelGlassPaint)
+        canvas.drawRoundRect(indexBarRect, pillRadius, pillRadius, panelBorderPaint)
 
-        // Disegna pillola indice A-Z
-        canvas.drawRoundRect(indexBarRect, dp(17f), dp(17f), panelGlassPaint)
-        canvas.drawRoundRect(indexBarRect, dp(17f), dp(17f), panelBorderPaint)
+        indexTextPaint.textSize = dp(11f) * scale
+        val idxTextOffset = (indexTextPaint.descent() + indexTextPaint.ascent()) / 2f
 
-        indexItemRects.clear()
-        val itemHeight = indexBarRect.height() / INDEX_ITEMS.size
-        INDEX_ITEMS.forEachIndexed { idx, ch ->
-            val top = indexBarRect.top + idx * itemHeight
-            val bottom = top + itemHeight
-            val rect = RectF(indexBarRect.left, top, indexBarRect.right, bottom)
-            indexItemRects.add(ch to rect)
-
+        for (i in INDEX_ITEMS.indices) {
+            val ch = INDEX_ITEMS[i]
+            val rect = indexItemRects[i]
             val isSelected = (ch == selectedIndexItem)
-            val hasApps = if (ch == '★') true else repository.hasAppsForLetter(ch, activeColorFilter)
+            val hasApps = (ch == '★') || repository.hasAppsForLetter(ch, activeColorFilter)
 
             if (isSelected) {
-                canvas.drawCircle(rect.centerX(), rect.centerY(), dp(13f), activePillPaint)
+                canvas.drawCircle(rect.centerX(), rect.centerY(), dp(12.5f) * scale, activePillPaint)
                 indexTextPaint.color = Color.WHITE
             } else {
                 indexTextPaint.color = if (hasApps) {
@@ -341,158 +610,140 @@ class EdgeDrawerView(
             }
 
             val label = if (ch == '★') "↓" else ch.toString()
-            val textY = rect.centerY() - (indexTextPaint.descent() + indexTextPaint.ascent()) / 2f
-            canvas.drawText(label, rect.centerX(), textY, indexTextPaint)
+            canvas.drawText(label, rect.centerX(), rect.centerY() - idxTextOffset, indexTextPaint)
         }
 
-        // Colonna verticale delle app accanto all'indice
-        val colLeft = if (isRight) indexLeft - dp(10f) - appColWidth else indexRight + dp(10f)
+        // 3. Intestazione colonna app
+        val appColWidth = dp(84f) * scale
+        val colLeft = if (isRight) indexBarRect.left - dp(10f) - appColWidth else indexBarRect.right + dp(10f)
         val colRight = colLeft + appColWidth
         val colCenterX = (colLeft + colRight) / 2f
 
-        // Intestazione sezione (es. "Recenti" o lettera "S")
-        val headerY = topPadding + dp(24f)
-        headerLetterPaint.textAlign = Paint.Align.CENTER
+        headerLetterPaint.textSize = dp(19f) * scale
+        val headerY = indexBarRect.top + dp(22f) * scale
         val headerTitle = if (selectedIndexItem == '★') "Recenti" else selectedIndexItem.toString()
         canvas.drawText(headerTitle, colCenterX, headerY, headerLetterPaint)
 
-        // Pulsante cartella colori in basso
-        val colorBtnSize = dp(46f)
-        val colorBtnCenterY = h - bottomPadding - colorBtnSize / 2f
-        colorButtonRect.set(
-            colCenterX - colorBtnSize / 2f,
-            colorBtnCenterY - colorBtnSize / 2f,
-            colCenterX + colorBtnSize / 2f,
-            colorBtnCenterY + colorBtnSize / 2f
-        )
-        drawColorFolderButton(canvas, colorButtonRect)
+        // 4. Pallini colore diretti in basso (scorrimento continuo senza staccare il dito)
+        val filters = AppColorFilter.entries
+        val dotVisualRadius = dp(8.5f) * scale
+        for (i in filters.indices) {
+            val filter = filters[i]
+            val r = colorDotRects[i]
+            val isSelectedColor = (filter == activeColorFilter)
+            val radius = if (isSelectedColor) dotVisualRadius * 1.18f else dotVisualRadius
 
-        // Area verticale disponibile per le icone delle app
-        val listTop = headerY + dp(16f)
-        val listBottom = colorButtonRect.top - dp(14f)
+            dotPaint.color = filter.swatchColor
+            canvas.drawCircle(r.centerX(), r.centerY(), radius, dotPaint)
+
+            if (isSelectedColor) {
+                canvas.drawCircle(r.centerX(), r.centerY(), radius + dp(2.5f), dotRingPaint)
+            }
+        }
+
+        // 5. Colonna verticale delle app (zoom fluido senza alone blu)
+        val listTop = headerY + dp(14f) * scale
+        val listBottom = colorDotRects[0].top - dp(12f) * scale
         appItemRects.clear()
 
-        canvas.save()
-        canvas.clipRect(colLeft - dp(8f), listTop, colRight + dp(8f), listBottom)
+        // Aggiorna animazione fluida dello zoom icona
+        val targetScale = if (hoveredAppIndex != -1) 1.20f else 1.0f
+        if (abs(currentHoverScale - targetScale) > 0.005f) {
+            currentHoverScale += (targetScale - currentHoverScale) * 0.35f
+            postInvalidateOnAnimation()
+        } else {
+            currentHoverScale = targetScale
+        }
 
-        val slotHeight = dp(76f)
-        val iconSize = dp(46f)
+        canvas.save()
+        canvas.clipRect(colLeft - dp(12f), listTop, colRight + dp(12f), listBottom)
+
+        val slotHeight = (if (showLabels) dp(74f) else dp(58f)) * scale
+        val baseIconSize = dp(46f) * scale
 
         if (displayedApps.isEmpty()) {
+            appLabelPaint.textSize = dp(11f) * scale
             appLabelPaint.color = Color.argb(160, 255, 255, 255)
-            canvas.drawText("Nessuna app", colCenterX, listTop + dp(40f), appLabelPaint)
+            canvas.drawText("Nessuna app", colCenterX, listTop + dp(36f), appLabelPaint)
             appLabelPaint.color = Color.WHITE
         } else {
-            displayedApps.forEachIndexed { i, app ->
+            appLabelPaint.textSize = dp(11f) * scale
+            for (i in displayedApps.indices) {
+                val app = displayedApps[i]
                 val itemTop = listTop + i * slotHeight + scrollOffsetY
                 val itemBottom = itemTop + slotHeight
                 if (itemBottom >= listTop && itemTop <= listBottom) {
                     val itemRect = RectF(colLeft, itemTop, colRight, itemBottom)
                     appItemRects.add(app to itemRect)
 
-                    val isHovered = (i == hoveredAppIndex)
-                    if (isHovered) {
-                        canvas.drawRoundRect(itemRect, dp(16f), dp(16f), hoverHighlightPaint)
+                    val isZoomed = (i == hoveredAppIndex) ||
+                        (hoveredAppIndex == -1 && i == lastAnimatedAppIndex && currentHoverScale > 1.01f)
+                    val iconScale = if (isZoomed) currentHoverScale else 1.0f
+                    val iconSize = baseIconSize * iconScale
+
+                    val iconLeft = colCenterX - iconSize / 2f
+                    val iconTop = itemTop + dp(5f) * scale - (iconSize - baseIconSize) / 2f
+                    tempRect.set(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize)
+
+                    canvas.drawBitmap(app.iconBitmap, null, tempRect, bitmapPaint)
+
+                    if (showLabels) {
+                        canvas.drawText(
+                            app.shortLabel,
+                            colCenterX,
+                            itemTop + dp(64f) * scale,
+                            appLabelPaint
+                        )
                     }
-
-                    val scale = if (isHovered) 1.16f else 1.0f
-                    val scaledIcon = iconSize * scale
-                    val iconLeft = colCenterX - scaledIcon / 2f
-                    val iconTop = itemTop + dp(6f) - (scaledIcon - iconSize) / 2f
-                    val dstRect = RectF(iconLeft, iconTop, iconLeft + scaledIcon, iconTop + scaledIcon)
-
-                    canvas.drawBitmap(app.iconBitmap, null, dstRect, null)
-
-                    val shortName = if (app.label.length > 11) {
-                        app.label.take(10) + "…"
-                    } else {
-                        app.label
-                    }
-                    canvas.drawText(shortName, colCenterX, itemTop + dp(66f), appLabelPaint)
                 }
             }
         }
         canvas.restore()
 
-        // Disegna la cartella colori aperta se attiva
-        if (isColorFolderOpen) {
-            drawColorFolderPopup(canvas, colLeft, colRight, isRight)
+        // 6. Menu rapido Pop-up / Metà sopra / Metà sotto (quando tieni il dito sull'app)
+        if (isWindowMenuVisible && windowMenuAppIndex in appItemRects.indices) {
+            drawWindowModeMenu(canvas, appItemRects[windowMenuAppIndex].second, isRight, scale)
         }
     }
 
-    private fun drawColorFolderButton(canvas: Canvas, rect: RectF) {
-        canvas.drawCircle(rect.centerX(), rect.centerY(), rect.width() / 2f, panelGlassPaint)
-        canvas.drawCircle(rect.centerX(), rect.centerY(), rect.width() / 2f, panelBorderPaint)
-
-        val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-        if (activeColorFilter != AppColorFilter.ALL) {
-            // Mostra il colore attivo selezionato
-            dotPaint.color = activeColorFilter.swatchColor
-            canvas.drawCircle(rect.centerX(), rect.centerY(), dp(12f), dotPaint)
-        } else {
-            // Disegna mini-griglia di pallini colorati stile cartella
-            val colors = listOf(
-                AppColorFilter.RED.swatchColor,
-                AppColorFilter.YELLOW.swatchColor,
-                AppColorFilter.GREEN.swatchColor,
-                AppColorFilter.BLUE.swatchColor,
-                AppColorFilter.PURPLE.swatchColor,
-                AppColorFilter.MONO.swatchColor
-            )
-            val offsets = listOf(
-                -dp(7f) to -dp(5f),
-                0f to -dp(5f),
-                dp(7f) to -dp(5f),
-                -dp(7f) to dp(5f),
-                0f to dp(5f),
-                dp(7f) to dp(5f)
-            )
-            colors.forEachIndexed { idx, col ->
-                dotPaint.color = col
-                val (ox, oy) = offsets[idx]
-                canvas.drawCircle(rect.centerX() + ox, rect.centerY() + oy, dp(2.8f), dotPaint)
-            }
-        }
-    }
-
-    private fun drawColorFolderPopup(
+    private fun drawWindowModeMenu(
         canvas: Canvas,
-        colLeft: Float,
-        colRight: Float,
-        isRight: Boolean
+        anchorAppRect: RectF,
+        isRight: Boolean,
+        scale: Float
     ) {
-        val filters = AppColorFilter.values()
-        val popupWidth = dp(156f)
-        val rowHeight = dp(38f)
-        val popupHeight = filters.size * rowHeight + dp(16f)
+        val btnWidth = dp(112f) * scale
+        val btnHeight = dp(38f) * scale
+        val gap = dp(8f) * scale
+        val totalHeight = WINDOW_OPTIONS.size * btnHeight + (WINDOW_OPTIONS.size - 1) * gap
 
-        val popupLeft = if (isRight) colLeft - popupWidth - dp(8f) else colRight + dp(8f)
-        val popupBottom = colorButtonRect.bottom
-        val popupTop = popupBottom - popupHeight
+        val menuLeft = if (isRight) {
+            anchorAppRect.left - btnWidth - dp(12f) * scale
+        } else {
+            anchorAppRect.right + dp(12f) * scale
+        }
+        val startTop = (anchorAppRect.centerY() - totalHeight / 2f)
+            .coerceIn(dp(48f), height - totalHeight - dp(36f))
 
-        colorFolderRect.set(popupLeft, popupTop, popupLeft + popupWidth, popupBottom)
-        canvas.drawRoundRect(colorFolderRect, dp(18f), dp(18f), folderBgPaint)
-        canvas.drawRoundRect(colorFolderRect, dp(18f), dp(18f), panelBorderPaint)
+        menuTextPaint.textSize = dp(12f) * scale
+        val textOffset = (menuTextPaint.descent() + menuTextPaint.ascent()) / 2f
 
-        colorOptionRects.clear()
-        val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        for (i in WINDOW_OPTIONS.indices) {
+            val top = startTop + i * (btnHeight + gap)
+            val rect = windowOptionRects[i]
+            rect.set(menuLeft, top, menuLeft + btnWidth, top + btnHeight)
 
-        filters.forEachIndexed { idx, filter ->
-            val rTop = popupTop + dp(8f) + idx * rowHeight
-            val rBottom = rTop + rowHeight
-            val rowRect = RectF(popupLeft + dp(6f), rTop, popupLeft + popupWidth - dp(6f), rBottom)
-            colorOptionRects.add(filter to rowRect)
+            val isSelected = (i == hoveredWindowOptionIndex)
+            val paint = if (isSelected) menuHighlightPaint else menuBgPaint
+            canvas.drawRoundRect(rect, dp(14f), dp(14f), paint)
+            canvas.drawRoundRect(rect, dp(14f), dp(14f), panelBorderPaint)
 
-            if (filter == activeColorFilter) {
-                canvas.drawRoundRect(rowRect, dp(10f), dp(10f), hoverHighlightPaint)
-            }
-
-            dotPaint.color = filter.swatchColor
-            canvas.drawCircle(rowRect.left + dp(16f), rowRect.centerY(), dp(7f), dotPaint)
-
-            val count = repository.countAppsForColor(filter)
-            val textY = rowRect.centerY() - (folderTextPaint.descent() + folderTextPaint.ascent()) / 2f
-            canvas.drawText("${filter.label} ($count)", rowRect.left + dp(32f), textY, folderTextPaint)
+            canvas.drawText(
+                WINDOW_OPTIONS[i].title,
+                rect.centerX(),
+                rect.centerY() - textOffset,
+                menuTextPaint
+            )
         }
     }
 }
