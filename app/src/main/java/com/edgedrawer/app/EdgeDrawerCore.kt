@@ -268,7 +268,6 @@ class PrefsManager(private val context: Context) {
         get() = prefs.getBoolean("is_right_side", true)
         set(value) = prefs.edit().putBoolean("is_right_side", value).apply()
 
-    // Tema Giorno/Notte (0 = Sistema, 1 = Giorno, 2 = Notte) & Accento One UI
     var themeMode: Int
         get() = prefs.getInt("theme_mode", 0)
         set(value) = prefs.edit().putInt("theme_mode", value).apply()
@@ -293,7 +292,6 @@ class PrefsManager(private val context: Context) {
         }
     }
 
-    // Trigger alfabetico laterale
     var isTriggerHidden: Boolean
         get() = prefs.getBoolean("trigger_hidden", false)
         set(value) = prefs.edit().putBoolean("trigger_hidden", value).apply()
@@ -302,12 +300,10 @@ class PrefsManager(private val context: Context) {
         get() = prefs.getBoolean("trigger_text_black", false)
         set(value) = prefs.edit().putBoolean("trigger_text_black", value).apply()
 
-    // Altezza barra trigger & pannello (28% .. 92%)
     var barHeightPercent: Int
         get() = prefs.getInt("bar_height_percent", 78)
         set(value) = prefs.edit().putInt("bar_height_percent", value).apply()
 
-    // Posizione verticale barra (0 = in alto, 50 = centro, 100 = in fondo)
     var verticalPositionPercent: Int
         get() = prefs.getInt("vertical_position_percent", 55)
         set(value) = prefs.edit().putInt("vertical_position_percent", value).apply()
@@ -320,7 +316,6 @@ class PrefsManager(private val context: Context) {
         get() = prefs.getInt("trigger_alpha_percent", 55)
         set(value) = prefs.edit().putInt("trigger_alpha_percent", value).apply()
 
-    // Pannello & Barra alfabetica aperta
     var panelScalePercent: Int
         get() = prefs.getInt("panel_scale_percent", 100)
         set(value) = prefs.edit().putInt("panel_scale_percent", value).apply()
@@ -337,7 +332,6 @@ class PrefsManager(private val context: Context) {
         get() = prefs.getInt("blur_radius", 60)
         set(value) = prefs.edit().putInt("blur_radius", value).apply()
 
-    // Distanze millimetriche layout
     var appSpacingDp: Int
         get() = prefs.getInt("app_spacing_dp", 12)
         set(value) = prefs.edit().putInt("app_spacing_dp", value).apply()
@@ -350,7 +344,6 @@ class PrefsManager(private val context: Context) {
         get() = prefs.getInt("apps_from_index_dp", 14)
         set(value) = prefs.edit().putInt("apps_from_index_dp", value).apply()
 
-    // Forza animazione onda Niagara Launcher (0 .. 100%)
     var waveStrengthPercent: Int
         get() = prefs.getInt("wave_strength_percent", 75)
         set(value) = prefs.edit().putInt("wave_strength_percent", value).apply()
@@ -359,7 +352,8 @@ class PrefsManager(private val context: Context) {
         get() = prefs.getBoolean("show_app_labels", true)
         set(value) = prefs.edit().putBoolean("show_app_labels", value).apply()
 
+    // Numero massimo app recenti (da 10 a 100 a step di 10)
     var recentCount: Int
-        get() = prefs.getInt("recent_count", 7)
-        set(value) = prefs.edit().putInt("recent_count", value).apply()
+        get() = prefs.getInt("recent_count", 20).coerceIn(10, 100)
+        set(value) = prefs.edit().putInt("recent_count", value.coerceIn(10, 100)).apply()
 }
