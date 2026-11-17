@@ -11,25 +11,28 @@ import kotlin.math.abs
 import kotlin.math.exp
 
 /**
- * Definisce la sequenza continua dell'indice verticale:
- * 0 = Recenti ('★' -> '↓')
- * 1..26 = Lettere 'A'..'Z'
- * 27..33 = I 7 pallini colore subito sotto la lettera 'Z'
+ * Sequenza continua dell'indice verticale:
+ * 0..6   = I 7 pallini colore sopra la lettera 'A'
+ * 7..32  = Lettere 'A'..'Z'
+ * 33     = App recenti ('★' -> '↓') sotto la lettera 'Z'
  */
 object EdgeIndexSlots {
-    val LETTERS: List<Char> = listOf('★') + ('A'..'Z').toList()
     val COLORS: List<AppColorFilter> = AppColorFilter.entries.toList()
-    val TOTAL_SLOTS: Int = LETTERS.size + COLORS.size
+    val LETTERS: List<Char> = ('A'..'Z').toList() + listOf('★')
+    val TOTAL_SLOTS: Int = COLORS.size + LETTERS.size
+    val RECENT_SLOT_INDEX: Int = TOTAL_SLOTS - 1
 
-    fun isColorSlot(slotIndex: Int): Boolean = slotIndex >= LETTERS.size
-    fun getLetter(slotIndex: Int): Char = LETTERS[slotIndex.coerceIn(0, LETTERS.lastIndex)]
+    fun isColorSlot(slotIndex: Int): Boolean = slotIndex in COLORS.indices
     fun getColor(slotIndex: Int): AppColorFilter =
-        COLORS[(slotIndex - LETTERS.size).coerceIn(0, COLORS.lastIndex)]
+        COLORS[slotIndex.coerceIn(0, COLORS.lastIndex)]
+
+    fun getLetter(slotIndex: Int): Char =
+        LETTERS[(slotIndex - COLORS.size).coerceIn(0, LETTERS.lastIndex)]
 }
 
 /**
- * Trigger laterale trasparente: mostra le stesse lettere del pannello (bianco o nero con leggera ombra)
- * e si attiva scorrendo verticalmente in alto o in basso (senza cozzare con la gesture Indietro).
+ * Trigger laterale trasparente: mostra le lettere A-Z e ↓ (sotto la Z)
+ * esattamente allineate alla porzione lettere del pannello aperto.
  */
 class EdgeTriggerView(
     context: Context,
@@ -48,13 +51,17 @@ class EdgeTriggerView(
         setLayerType(LAYER_TYPE_HARDWARE, null)
     }
 
+    /**
+     * Restituisce l'indice slot globale (7..33) corrispondente alla lettera toccata sul trigger.
+     */
     fun getSlotAtY(localY: Float): Int {
-        if (height <= 0) return 0
+        if (height <= 0) return EdgeIndexSlots.RECENT_SLOT_INDEX
         val pad = dp(6f)
         val usableH = (height - pad * 2f).coerceAtLeast(1f)
         val clamped = (localY - pad).coerceIn(0f, usableH - 0.1f)
-        return ((clamped / usableH) * EdgeIndexSlots.LETTERS.size).toInt()
+        val letterIdx = ((clamped / usableH) * EdgeIndexSlots.LETTERS.size).toInt()
             .coerceIn(0, EdgeIndexSlots.LETTERS.lastIndex)
+        return EdgeIndexSlots.COLORS.size + letterIdx
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -103,9 +110,9 @@ class EdgeTriggerView(
 
 /**
  * Pannello laterale fluido stile Niagara Launcher + One UI:
- * - Onda dinamica regolabile su lettere e app
- * - Pallini colore in verticale subito sotto la lettera Z
- * - Menu tenuta su app (Pop-up / Metà sopra / Metà sotto) con corridoio sicuro
+ * - In cima (sopra la A): 7 pallini colore
+ * - Al centro: lettere A-Z
+ * - In fondo (sotto la Z): ↓ (App recenti fino a 100)
  */
 class EdgeDrawerView(
     context: Context,
@@ -126,26 +133,23 @@ class EdgeDrawerView(
 
     private var selectedLetter: Char = '★'
     private var activeColorFilter: AppColorFilter = AppColorFilter.ALL
-    private var lastTouchedSlot: Int = 0
+    private var lastTouchedSlot: Int = EdgeIndexSlots.RECENT_SLOT_INDEX
     private var displayedApps: List<AppEntry> = emptyList()
     private var hoveredAppIndex: Int = -1
     private var scrollOffsetY: Float = 0f
 
-    // Coordinate dito e animazione apertura / onda Niagara
     private var fingerY: Float = -1f
     private var isFingerTouchingIndex: Boolean = false
     private var openProgress: Float = 0f
     private var currentHoverScale: Float = 1.0f
     private var lastAnimatedAppIndex: Int = -1
 
-    // Menu tenuta su app (Pop-up / Metà sopra / Metà sotto)
     private var isWindowMenuVisible: Boolean = false
     private var windowMenuAppIndex: Int = -1
     private var hoveredWindowOptionIndex: Int = -1
     private var holdAnchorX: Float = 0f
     private var holdAnchorY: Float = 0f
 
-    // Rettangoli pre-allocati per hit-testing
     private val indexBarRect = RectF()
     private val slotRects = Array(EdgeIndexSlots.TOTAL_SLOTS) { RectF() }
     private val windowOptionRects = Array(WINDOW_OPTIONS.size) { RectF() }
@@ -160,7 +164,6 @@ class EdgeDrawerView(
     private val density = resources.displayMetrics.density
     private fun dp(value: Float): Float = value * density
 
-    // Paint pre-allocati
     private val dimBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val indexPillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val indexBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -249,7 +252,7 @@ class EdgeDrawerView(
         currentHoverScale = 1.0f
         scrollOffsetY = 0f
 
-        val safeSlot = initialSlot.coerceIn(0, EdgeIndexSlots.LETTERS.lastIndex)
+        val safeSlot = initialSlot.coerceIn(EdgeIndexSlots.COLORS.size, EdgeIndexSlots.TOTAL_SLOTS - 1)
         lastTouchedSlot = safeSlot
         selectedLetter = EdgeIndexSlots.getLetter(safeSlot)
         refreshDisplayedApps()
@@ -260,7 +263,6 @@ class EdgeDrawerView(
             isFingerTouchingIndex = fromContinuousSwipe
         }
 
-        // Animazione fluida di apertura stile Niagara Launcher
         val animDuration = if (prefs.waveStrengthPercent > 0) 180L else 90L
         ValueAnimator.ofFloat(0f, 1f).apply {
             duration = animDuration
@@ -300,7 +302,7 @@ class EdgeDrawerView(
     }
 
     /**
-     * Seleziona lettera o pallino colore in verticale (sotto la Z) con feedback aptico ad ogni cambio.
+     * Seleziona colore (sopra la A), lettera (A-Z) o recenti (sotto la Z) con feedback aptico.
      */
     private fun selectSlotByY(y: Float, haptic: Boolean = true) {
         if (indexBarRect.height() <= 0f) return
@@ -336,9 +338,6 @@ class EdgeDrawerView(
         }
     }
 
-    /**
-     * Riceve il trascinamento continuo dal bordo senza staccare il dito.
-     */
     fun handleExternalDrag(rawX: Float, rawY: Float, action: Int) {
         val loc = IntArray(2)
         getLocationOnScreen(loc)
@@ -365,7 +364,6 @@ class EdgeDrawerView(
     }
 
     private fun processPointerMove(x: Float, y: Float) {
-        // 1. Gestione menu Pop-up / Metà sopra / Metà sotto con corridoio sicuro
         if (isWindowMenuVisible) {
             val optIdx = findWindowOptionAt(x, y)
             if (optIdx != hoveredWindowOptionIndex) {
@@ -377,11 +375,9 @@ class EdgeDrawerView(
             if (optIdx != -1 || safeMenuCorridorRect.contains(x, y)) {
                 return
             }
-            // Solo se il dito esce davvero dal corridoio chiudiamo il menu
             cancelHoldTimer()
         }
 
-        // 2. Scorrimento sull'indice verticale (Lettere A-Z + Pallini colore sotto la Z)
         if (isInIndexZone(x)) {
             isFingerTouchingIndex = true
             fingerY = y
@@ -393,7 +389,6 @@ class EdgeDrawerView(
 
         isFingerTouchingIndex = false
 
-        // 3. Passaggio sulle app
         val appIdx = findAppIndexAt(x, y)
         if (appIdx != hoveredAppIndex) {
             hoveredAppIndex = appIdx
@@ -521,12 +516,23 @@ class EdgeDrawerView(
                 }
 
                 val dy = y - lastTouchY
-                if (!isWindowMenuVisible && abs(dy) > dp(10f) && displayedApps.size > 5) {
+                if (!isWindowMenuVisible && abs(dy) > dp(10f) && displayedApps.size > 4) {
                     isScrollingAppList = true
                     isFingerTouchingIndex = false
                     cancelHoldTimer()
                     hoveredAppIndex = -1
-                    scrollOffsetY = (scrollOffsetY + dy).coerceIn(-dp(480f), 0f)
+
+                    // Calcola dinamicamente l'altezza totale della lista (supporta fino a 100 app recenti)
+                    val scale = (prefs.panelScalePercent / 100f).coerceIn(0.65f, 1.35f)
+                    val baseIconSize = dp(46f) * scale
+                    val labelDist = dp(prefs.labelDistanceDp.toFloat())
+                    val labelHeight = if (prefs.showAppLabels) dp(13f) * scale + labelDist else 0f
+                    val slotHeight = baseIconSize + labelHeight + dp(prefs.appSpacingDp.toFloat())
+                    val totalContentH = displayedApps.size * slotHeight
+                    val visibleListH = (indexBarRect.height() - dp(36f) * scale).coerceAtLeast(dp(120f))
+                    val maxScrollUp = -(totalContentH - visibleListH).coerceAtLeast(0f)
+
+                    scrollOffsetY = (scrollOffsetY + dy).coerceIn(maxScrollUp, 0f)
                     lastTouchY = y
                     invalidate()
                     return true
@@ -564,10 +570,6 @@ class EdgeDrawerView(
         }
     }
 
-    /**
-     * Calcola la geometria dell'indice unificato (Lettere + Pallini colore sotto la Z)
-     * rispettando altezza e posizione verticale regolabili dall'utente.
-     */
     private fun computeGeometry(w: Float, h: Float) {
         val scale = (prefs.panelScalePercent / 100f).coerceIn(0.65f, 1.35f)
         val isRight = prefs.isRightSide
@@ -577,7 +579,6 @@ class EdgeDrawerView(
         val indexLeft = if (isRight) w - edgeMargin - indexWidth else edgeMargin
         val indexRight = indexLeft + indexWidth
 
-        // Calcola l'altezza dei 27 slot lettere esattamente come nel Trigger per un allineamento perfetto
         val heightRatio = (prefs.barHeightPercent / 100f).coerceIn(0.30f, 0.90f)
         val lettersHeight = h * heightRatio
         val pad = dp(6f)
@@ -611,7 +612,6 @@ class EdgeDrawerView(
         val waveStrength = (prefs.waveStrengthPercent / 100f).coerceIn(0f, 1.5f)
         val slideOffset = (1f - openProgress) * dp(28f) * (-dirSign)
 
-        // 1. Sfondo oscurato/blur con dissolvenza
         val baseDimAlpha = Color.alpha(dimBgPaint.color)
         dimBgPaint.alpha = (baseDimAlpha * openProgress).toInt()
         canvas.drawRect(0f, 0f, w, h, dimBgPaint)
@@ -620,7 +620,6 @@ class EdgeDrawerView(
         canvas.save()
         canvas.translate(slideOffset, 0f)
 
-        // 2. Pillola verticale unica (Lettere A-Z + 7 Pallini Colore sotto la Z)
         val pillRadius = indexBarRect.width() / 2f
         canvas.drawRoundRect(indexBarRect, pillRadius, pillRadius, indexPillPaint)
         canvas.drawRoundRect(indexBarRect, pillRadius, pillRadius, indexBorderPaint)
@@ -633,7 +632,6 @@ class EdgeDrawerView(
             val rect = slotRects[i]
             val cy = rect.centerY()
 
-            // Effetto onda Niagara Launcher vicino al dito
             val dist = if (isFingerTouchingIndex && fingerY >= 0f) abs(cy - fingerY) else 9999f
             val waveFactor = if (dist < waveRadiusPx * 2.2f && waveStrength > 0f) {
                 exp(-(dist * dist) / (2f * waveRadiusPx * waveRadiusPx))
@@ -642,8 +640,22 @@ class EdgeDrawerView(
             }
             val waveShiftX = dirSign * maxWaveShiftPx * waveFactor
 
-            if (!EdgeIndexSlots.isColorSlot(i)) {
-                // Slot Lettera (↓ o A-Z)
+            if (EdgeIndexSlots.isColorSlot(i)) {
+                // Slot Pallino Colore in cima (sopra la lettera A)
+                val filter = EdgeIndexSlots.getColor(i)
+                val isSelectedColor = (filter == activeColorFilter)
+                val cx = rect.centerX() + waveShiftX
+                val baseDotR = (slotRects[0].height() * 0.34f).coerceIn(dp(4.5f), dp(8f) * scale)
+                val dotR = baseDotR * (if (isSelectedColor) 1.22f else 1f) * (1f + 0.25f * waveFactor)
+
+                dotPaint.color = filter.swatchColor
+                canvas.drawCircle(cx, cy, dotR, dotPaint)
+
+                if (isSelectedColor) {
+                    canvas.drawCircle(cx, cy, dotR + dp(2f), dotRingPaint)
+                }
+            } else {
+                // Slot Lettera (A-Z e ↓ Recenti sotto la Z)
                 val ch = EdgeIndexSlots.getLetter(i)
                 val isSelected = (ch == selectedLetter)
                 val hasApps = (ch == '★') || repository.hasAppsForLetter(ch, activeColorFilter)
@@ -668,24 +680,9 @@ class EdgeDrawerView(
                 val textOffset = (indexTextPaint.descent() + indexTextPaint.ascent()) / 2f
                 val label = if (ch == '★') "↓" else ch.toString()
                 canvas.drawText(label, cx, cy - textOffset, indexTextPaint)
-            } else {
-                // Slot Pallino Colore subito sotto la Z
-                val filter = EdgeIndexSlots.getColor(i)
-                val isSelectedColor = (filter == activeColorFilter)
-                val cx = rect.centerX() + waveShiftX
-                val baseDotR = (slotRects[0].height() * 0.34f).coerceIn(dp(4.5f), dp(8f) * scale)
-                val dotR = baseDotR * (if (isSelectedColor) 1.22f else 1f) * (1f + 0.25f * waveFactor)
-
-                dotPaint.color = filter.swatchColor
-                canvas.drawCircle(cx, cy, dotR, dotPaint)
-
-                if (isSelectedColor) {
-                    canvas.drawCircle(cx, cy, dotR + dp(2f), dotRingPaint)
-                }
             }
         }
 
-        // 3. Colonna verticale delle App accanto all'indice
         val appGapFromIndex = dp(prefs.appsFromIndexDp.toFloat())
         val appColWidth = dp(76f) * scale
         val colLeft = if (isRight) {
@@ -698,14 +695,13 @@ class EdgeDrawerView(
 
         headerPaint.textSize = dp(18f) * scale
         val headerY = indexBarRect.top + dp(18f) * scale
-        val headerTitle = if (selectedLetter == '★') "Recenti" else selectedLetter.toString()
+        val headerTitle = if (selectedLetter == '★') "Recenti (${displayedApps.size})" else selectedLetter.toString()
         canvas.drawText(headerTitle, colCenterX, headerY, headerPaint)
 
         val listTop = headerY + dp(12f) * scale
         val listBottom = indexBarRect.bottom
         appItemRects.clear()
 
-        // Aggiorna animazione fluida zoom app
         val targetScale = if (hoveredAppIndex != -1) 1.22f else 1.0f
         if (abs(currentHoverScale - targetScale) > 0.005f) {
             currentHoverScale += (targetScale - currentHoverScale) * 0.38f
@@ -742,7 +738,6 @@ class EdgeDrawerView(
                     val iconScale = if (isZoomed) currentHoverScale else 1.0f
                     val iconSize = baseIconSize * iconScale
 
-                    // Leggero spostamento orizzontale verso il centro quando l'app è selezionata (effetto Niagara)
                     val popShiftX = if (isZoomed) dirSign * dp(8f) * waveStrength * ((iconScale - 1f) / 0.22f) else 0f
                     val iconCenterX = colCenterX + popShiftX
                     val iconLeft = iconCenterX - iconSize / 2f
@@ -760,7 +755,6 @@ class EdgeDrawerView(
         }
         canvas.restore()
 
-        // 4. Menu rapido Pop-up / Metà sopra / Metà sotto con corridoio sicuro
         if (isWindowMenuVisible && windowMenuAppIndex in appItemRects.indices) {
             drawWindowModeMenu(canvas, appItemRects[windowMenuAppIndex].second, isRight, scale)
         }
@@ -787,7 +781,6 @@ class EdgeDrawerView(
         val startTop = (anchorAppRect.centerY() - totalHeight / 2f)
             .coerceIn(dp(36f), height - totalHeight - dp(24f))
 
-        // Aggiorna il corridoio sicuro che unisce l'app ai 3 tasti così non scompare mentre sposti il dito
         val pad = dp(18f)
         safeMenuCorridorRect.set(
             minOf(anchorAppRect.left, menuLeft) - pad,
