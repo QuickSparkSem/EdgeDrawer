@@ -3,19 +3,14 @@ package com.edgedrawer.app
 import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.*
-import android.view.HapticFeedbackConstants
+import android.os.Handler
+import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import kotlin.math.abs
 import kotlin.math.exp
 
-/**
- * Sequenza continua dell'indice verticale:
- * 0..6   = I 7 pallini colore sopra la lettera 'A'
- * 7..32  = Lettere 'A'..'Z'
- * 33     = App recenti ('★' -> '↓') sotto la lettera 'Z'
- */
 object EdgeIndexSlots {
     val COLORS: List<AppColorFilter> = AppColorFilter.entries.toList()
     val LETTERS: List<Char> = ('A'..'Z').toList() + listOf('★')
@@ -30,10 +25,6 @@ object EdgeIndexSlots {
         LETTERS[(slotIndex - COLORS.size).coerceIn(0, LETTERS.lastIndex)]
 }
 
-/**
- * Trigger laterale trasparente: mostra le lettere A-Z e ↓ (sotto la Z)
- * esattamente allineate alla porzione lettere del pannello aperto.
- */
 class EdgeTriggerView(
     context: Context,
     private val prefs: PrefsManager
@@ -51,9 +42,6 @@ class EdgeTriggerView(
         setLayerType(LAYER_TYPE_HARDWARE, null)
     }
 
-    /**
-     * Restituisce l'indice slot globale (7..33) corrispondente alla lettera toccata sul trigger.
-     */
     fun getSlotAtY(localY: Float): Int {
         if (height <= 0) return EdgeIndexSlots.RECENT_SLOT_INDEX
         val pad = dp(6f)
@@ -108,12 +96,6 @@ class EdgeTriggerView(
     }
 }
 
-/**
- * Pannello laterale fluido stile Niagara Launcher + One UI:
- * - In cima (sopra la A): 7 pallini colore
- * - Al centro: lettere A-Z
- * - In fondo (sotto la Z): ↓ (App recenti fino a 100)
- */
 class EdgeDrawerView(
     context: Context,
     private val repository: AppRepository,
@@ -128,8 +110,10 @@ class EdgeDrawerView(
             LaunchWindowMode.SPLIT_TOP,
             LaunchWindowMode.SPLIT_BOTTOM
         )
-        private const val HOLD_DELAY_MS = 340L
+        private const val HOLD_DELAY_MS = 320L
     }
+
+    private val uiHandler = Handler(Looper.getMainLooper())
 
     private var selectedLetter: Char = '★'
     private var activeColorFilter: AppColorFilter = AppColorFilter.ALL
@@ -165,6 +149,9 @@ class EdgeDrawerView(
     private fun dp(value: Float): Float = value * density
 
     private val dimBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var cachedGradientWidth = -1f
+    private var cachedGradientProgress = -1f
+
     private val indexPillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val indexBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
@@ -203,7 +190,7 @@ class EdgeDrawerView(
             isWindowMenuVisible = true
             windowMenuAppIndex = hoveredAppIndex
             hoveredWindowOptionIndex = -1
-            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            HapticHelper.trigger(context, prefs, HapticHelper.PulseType.LONG_HOLD)
             invalidate()
         }
     }
@@ -216,32 +203,72 @@ class EdgeDrawerView(
     private fun applyThemeAndPrefs() {
         isNight = prefs.isNightThemeActive()
         accentColor = prefs.getAccentColor()
+        cachedGradientWidth = -1f
 
-        val bgAlpha = ((prefs.panelBgAlphaPercent / 100f) * 210).toInt().coerceIn(0, 255)
         val barAlpha = ((prefs.indexBarAlphaPercent / 100f) * 235).toInt().coerceIn(0, 255)
 
         if (isNight) {
-            dimBgPaint.color = Color.argb(bgAlpha, 11, 13, 19)
             indexPillPaint.color = Color.argb(barAlpha, 22, 26, 36)
             indexBorderPaint.color = Color.argb((barAlpha * 0.28f).toInt(), 255, 255, 255)
             headerPaint.color = Color.WHITE
             appLabelPaint.color = Color.WHITE
             appLabelPaint.setShadowLayer(dp(3f), 0f, dp(1f), Color.argb(220, 0, 0, 0))
             dotRingPaint.color = Color.WHITE
-            menuBgPaint.color = Color.argb(245, 26, 31, 44)
+            menuBgPaint.color = Color.argb(248, 26, 31, 44)
         } else {
-            dimBgPaint.color = Color.argb(bgAlpha, 240, 243, 249)
             indexPillPaint.color = Color.argb(barAlpha, 255, 255, 255)
             indexBorderPaint.color = Color.argb((barAlpha * 0.25f).toInt(), 15, 20, 30)
             headerPaint.color = Color.parseColor("#12151C")
             appLabelPaint.color = Color.parseColor("#12151C")
             appLabelPaint.setShadowLayer(dp(2.5f), 0f, dp(1f), Color.argb(200, 255, 255, 255))
             dotRingPaint.color = Color.parseColor("#12151C")
-            menuBgPaint.color = Color.argb(248, 255, 255, 255)
+            menuBgPaint.color = Color.argb(250, 255, 255, 255)
         }
 
         activePillPaint.color = accentColor
         menuHighlightPaint.color = accentColor
+    }
+
+    /**
+     * Crea il gradiente sfumato orizzontale:
+     * molto opaco sotto la colonna app/indice e sfumato verso la trasparenza sul lato opposto.
+     */
+    private fun updateBackgroundGradient(w: Float) {
+        if (w <= 0f) return
+        if (w == cachedGradientWidth && abs(openProgress - cachedGradientProgress) < 0.01f) return
+        cachedGradientWidth = w
+        cachedGradientProgress = openProgress
+
+        val baseRgb = if (isNight) Color.rgb(11, 13, 19) else Color.rgb(240, 243, 249)
+        val r = Color.red(baseRgb)
+        val g = Color.green(baseRgb)
+        val b = Color.blue(baseRgb)
+
+        val alphaNear = ((prefs.panelBgAlphaPercent / 100f) * 245f * openProgress).toInt().coerceIn(0, 255)
+        val alphaFar = ((prefs.panelBgOppositeAlphaPercent / 100f) * 245f * openProgress).toInt().coerceIn(0, 255)
+        val alphaMid = ((alphaNear * 0.62f) + (alphaFar * 0.38f)).toInt().coerceIn(0, 255)
+
+        val colorNear = Color.argb(alphaNear, r, g, b)
+        val colorMid = Color.argb(alphaMid, r, g, b)
+        val colorFar = Color.argb(alphaFar, r, g, b)
+
+        dimBgPaint.shader = if (prefs.isRightSide) {
+            // Lato destro opaco -> centro morbido -> lato sinistro trasparente
+            LinearGradient(
+                0f, 0f, w, 0f,
+                intArrayOf(colorFar, colorMid, colorNear, colorNear),
+                floatArrayOf(0f, 0.48f, 0.72f, 1f),
+                Shader.TileMode.CLAMP
+            )
+        } else {
+            // Lato sinistro opaco -> centro morbido -> lato destro trasparente
+            LinearGradient(
+                0f, 0f, w, 0f,
+                intArrayOf(colorNear, colorNear, colorMid, colorFar),
+                floatArrayOf(0f, 0.28f, 0.52f, 1f),
+                Shader.TileMode.CLAMP
+            )
+        }
     }
 
     fun prepareOpen(fromContinuousSwipe: Boolean, initialSlot: Int, initialRawY: Float) {
@@ -286,14 +313,14 @@ class EdgeDrawerView(
 
     private fun scheduleHoldTimer(appIdx: Int, x: Float, y: Float) {
         if (isWindowMenuVisible && windowMenuAppIndex == appIdx) return
-        cancelHoldTimer()
+        uiHandler.removeCallbacks(holdRunnable)
         holdAnchorX = x
         holdAnchorY = y
-        postDelayed(holdRunnable, HOLD_DELAY_MS)
+        uiHandler.postDelayed(holdRunnable, HOLD_DELAY_MS)
     }
 
     private fun cancelHoldTimer() {
-        removeCallbacks(holdRunnable)
+        uiHandler.removeCallbacks(holdRunnable)
         if (isWindowMenuVisible) {
             isWindowMenuVisible = false
             windowMenuAppIndex = -1
@@ -301,9 +328,6 @@ class EdgeDrawerView(
         }
     }
 
-    /**
-     * Seleziona colore (sopra la A), lettera (A-Z) o recenti (sotto la Z) con feedback aptico.
-     */
     private fun selectSlotByY(y: Float, haptic: Boolean = true) {
         if (indexBarRect.height() <= 0f) return
         val pad = dp(6f)
@@ -333,7 +357,7 @@ class EdgeDrawerView(
             }
 
             if (haptic) {
-                performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                HapticHelper.trigger(context, prefs, HapticHelper.PulseType.TICK)
             }
         }
     }
@@ -369,7 +393,7 @@ class EdgeDrawerView(
             if (optIdx != hoveredWindowOptionIndex) {
                 hoveredWindowOptionIndex = optIdx
                 if (optIdx != -1) {
-                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    HapticHelper.trigger(context, prefs, HapticHelper.PulseType.APP_HOVER)
                 }
             }
             if (optIdx != -1 || safeMenuCorridorRect.contains(x, y)) {
@@ -395,13 +419,13 @@ class EdgeDrawerView(
             if (appIdx != -1) {
                 lastAnimatedAppIndex = appIdx
                 currentHoverScale = 1.02f
-                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                HapticHelper.trigger(context, prefs, HapticHelper.PulseType.APP_HOVER)
                 scheduleHoldTimer(appIdx, x, y)
             } else {
                 cancelHoldTimer()
             }
         } else if (appIdx != -1) {
-            if (abs(x - holdAnchorX) > dp(16f) || abs(y - holdAnchorY) > dp(16f)) {
+            if (abs(x - holdAnchorX) > dp(18f) || abs(y - holdAnchorY) > dp(18f)) {
                 scheduleHoldTimer(appIdx, x, y)
             }
         }
@@ -414,7 +438,7 @@ class EdgeDrawerView(
             if (optIdx in WINDOW_OPTIONS.indices) {
                 val chosenMode = WINDOW_OPTIONS[optIdx]
                 cancelHoldTimer()
-                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                HapticHelper.trigger(context, prefs, HapticHelper.PulseType.CONFIRM)
                 onLaunchApp(targetApp, chosenMode)
                 return true
             }
@@ -422,7 +446,7 @@ class EdgeDrawerView(
                 appItemRects[windowMenuAppIndex].second.contains(x, y)
             ) {
                 cancelHoldTimer()
-                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                HapticHelper.trigger(context, prefs, HapticHelper.PulseType.CONFIRM)
                 onLaunchApp(targetApp, LaunchWindowMode.NORMAL)
                 return true
             }
@@ -434,7 +458,7 @@ class EdgeDrawerView(
         if (appIdx in displayedApps.indices) {
             val target = displayedApps[appIdx]
             cancelHoldTimer()
-            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            HapticHelper.trigger(context, prefs, HapticHelper.PulseType.CONFIRM)
             onLaunchApp(target, LaunchWindowMode.NORMAL)
             return true
         }
@@ -460,8 +484,12 @@ class EdgeDrawerView(
     }
 
     private fun findWindowOptionAt(x: Float, y: Float): Int {
+        val hitSlop = dp(6f)
         for (i in windowOptionRects.indices) {
-            if (windowOptionRects[i].contains(x, y)) {
+            val r = windowOptionRects[i]
+            if (x >= r.left - hitSlop && x <= r.right + hitSlop &&
+                y >= r.top - hitSlop && y <= r.bottom + hitSlop
+            ) {
                 return i
             }
         }
@@ -522,7 +550,6 @@ class EdgeDrawerView(
                     cancelHoldTimer()
                     hoveredAppIndex = -1
 
-                    // Calcola dinamicamente l'altezza totale della lista (supporta fino a 100 app recenti)
                     val scale = (prefs.panelScalePercent / 100f).coerceIn(0.65f, 1.35f)
                     val baseIconSize = dp(46f) * scale
                     val labelDist = dp(prefs.labelDistanceDp.toFloat())
@@ -560,9 +587,15 @@ class EdgeDrawerView(
         return super.onTouchEvent(event)
     }
 
+    override fun onDetachedFromWindow() {
+        uiHandler.removeCallbacks(holdRunnable)
+        super.onDetachedFromWindow()
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w > 0 && h > 0) {
+            cachedGradientWidth = -1f
             computeGeometry(w.toFloat(), h.toFloat())
             if (fingerY < 0f) {
                 fingerY = slotRects[lastTouchedSlot].centerY()
@@ -612,10 +645,8 @@ class EdgeDrawerView(
         val waveStrength = (prefs.waveStrengthPercent / 100f).coerceIn(0f, 1.5f)
         val slideOffset = (1f - openProgress) * dp(28f) * (-dirSign)
 
-        val baseDimAlpha = Color.alpha(dimBgPaint.color)
-        dimBgPaint.alpha = (baseDimAlpha * openProgress).toInt()
+        updateBackgroundGradient(w)
         canvas.drawRect(0f, 0f, w, h, dimBgPaint)
-        dimBgPaint.alpha = baseDimAlpha
 
         canvas.save()
         canvas.translate(slideOffset, 0f)
@@ -641,7 +672,6 @@ class EdgeDrawerView(
             val waveShiftX = dirSign * maxWaveShiftPx * waveFactor
 
             if (EdgeIndexSlots.isColorSlot(i)) {
-                // Slot Pallino Colore in cima (sopra la lettera A)
                 val filter = EdgeIndexSlots.getColor(i)
                 val isSelectedColor = (filter == activeColorFilter)
                 val cx = rect.centerX() + waveShiftX
@@ -655,7 +685,6 @@ class EdgeDrawerView(
                     canvas.drawCircle(cx, cy, dotR + dp(2f), dotRingPaint)
                 }
             } else {
-                // Slot Lettera (A-Z e ↓ Recenti sotto la Z)
                 val ch = EdgeIndexSlots.getLetter(i)
                 val isSelected = (ch == selectedLetter)
                 val hasApps = (ch == '★') || repository.hasAppsForLetter(ch, activeColorFilter)
@@ -768,8 +797,8 @@ class EdgeDrawerView(
         isRight: Boolean,
         scale: Float
     ) {
-        val btnWidth = dp(116f) * scale
-        val btnHeight = dp(38f) * scale
+        val btnWidth = dp(122f) * scale
+        val btnHeight = dp(40f) * scale
         val gap = dp(8f) * scale
         val totalHeight = WINDOW_OPTIONS.size * btnHeight + (WINDOW_OPTIONS.size - 1) * gap
 
@@ -781,7 +810,7 @@ class EdgeDrawerView(
         val startTop = (anchorAppRect.centerY() - totalHeight / 2f)
             .coerceIn(dp(36f), height - totalHeight - dp(24f))
 
-        val pad = dp(18f)
+        val pad = dp(24f)
         safeMenuCorridorRect.set(
             minOf(anchorAppRect.left, menuLeft) - pad,
             minOf(anchorAppRect.top, startTop) - pad,
@@ -789,7 +818,7 @@ class EdgeDrawerView(
             maxOf(anchorAppRect.bottom, startTop + totalHeight) + pad
         )
 
-        menuTextPaint.textSize = dp(12f) * scale
+        menuTextPaint.textSize = dp(12.5f) * scale
         val textOffset = (menuTextPaint.descent() + menuTextPaint.ascent()) / 2f
         val defaultTextColor = if (isNight) Color.WHITE else Color.parseColor("#12151C")
 
