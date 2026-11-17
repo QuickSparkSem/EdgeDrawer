@@ -19,7 +19,6 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
-import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -156,7 +155,6 @@ class EdgeOverlayService : Service() {
         ).apply {
             gravity = (if (prefs.isRightSide) Gravity.END else Gravity.START) or Gravity.TOP
             x = (6f * density).toInt()
-            // Allinea il trigger esattamente sotto i 7 pallini colore (sulle lettere A-Z e ↓)
             y = barTopY + colorsOffsetPx
         }
 
@@ -179,7 +177,7 @@ class EdgeOverlayService : Service() {
                         val dy = abs(currentRawY - downY)
                         if (dy >= verticalTriggerThreshold) {
                             triggeredInThisTouch = true
-                            handle.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            HapticHelper.trigger(this, prefs, HapticHelper.PulseType.TICK)
                             val startSlot = handle.getSlotAtY(event.y)
                             openDrawer(
                                 fromContinuousSwipe = true,
@@ -196,7 +194,7 @@ class EdgeOverlayService : Service() {
                     if (triggeredInThisTouch) {
                         drawerView?.handleExternalDrag(currentRawX, currentRawY, event.actionMasked)
                     } else {
-                        handle.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        HapticHelper.trigger(this, prefs, HapticHelper.PulseType.TICK)
                         val tappedSlot = handle.getSlotAtY(event.y)
                         openDrawer(
                             fromContinuousSwipe = false,
@@ -240,8 +238,9 @@ class EdgeOverlayService : Service() {
             repository = repository,
             prefs = prefs,
             onLaunchApp = { appEntry, windowMode ->
-                closeDrawer()
+                // Avvia prima l'app mentre l'overlay è ancora visibile (evita il blocco background Android 14+)
                 launchTargetApp(appEntry.packageName, windowMode)
+                mainHandler.postDelayed({ closeDrawer() }, 70L)
             },
             onDismiss = {
                 closeDrawer()
@@ -291,71 +290,141 @@ class EdgeOverlayService : Service() {
         }
     }
 
+    private fun createBaseLaunchIntent(packageName: String): Intent? {
+        val resolved = packageManager.getLaunchIntentForPackage(packageName) ?: return null
+        val component = resolved.component ?: return resolved
+        return Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            setComponent(component)
+            setPackage(packageName)
+        }
+    }
+
     private fun launchTargetApp(packageName: String, mode: LaunchWindowMode) {
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: return
+        val baseIntent = createBaseLaunchIntent(packageName) ?: return
 
         val screenW = resources.displayMetrics.widthPixels
         val screenH = resources.displayMetrics.heightPixels
 
         when (mode) {
             LaunchWindowMode.NORMAL -> {
-                launchIntent.addFlags(
+                baseIntent.addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
                 )
-                startActivity(launchIntent)
+                try {
+                    startActivity(baseIntent)
+                } catch (_: Exception) {
+                }
             }
 
             LaunchWindowMode.POPUP -> {
-                launchIntent.addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK
-                )
-                launchIntent.putExtra("miui.intent.extra.OPEN_IN_FREEFORM", true)
-
-                val marginX = (screenW * 0.10f).toInt()
-                val marginY = (screenH * 0.18f).toInt()
+                val marginX = (screenW * 0.08f).toInt()
+                val marginY = (screenH * 0.16f).toInt()
                 val popupBounds = Rect(marginX, marginY, screenW - marginX, screenH - marginY)
 
-                val options = createWindowModeOptions(windowingMode = 5, bounds = popupBounds)
-                startActivity(launchIntent, options.toBundle())
+                val popupIntent = Intent(baseIntent).apply {
+                    addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or
+                            Intent.FLAG_ACTIVITY_MULTIPLE_TASK or
+                            Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT
+                    )
+                    putExtra("miui.intent.extra.OPEN_IN_FREEFORM", true)
+                    putExtra("android.activity.launchBounds", popupBounds)
+                }
+
+                // Tenta prima WINDOWING_MODE_FREEFORM (5), con fallback diretto in caso di restrizione OEM
+                val freeformOptions = createWindowModeOptions(windowingMode = 5, bounds = popupBounds)
+                try {
+                    startActivity(popupIntent, freeformOptions.toBundle())
+                } catch (_: Exception) {
+                    try {
+                        val boundsOnly = ActivityOptions.makeBasic().apply {
+                            setLaunchBounds(popupBounds)
+                        }
+                        startActivity(popupIntent, boundsOnly.toBundle())
+                    } catch (_: Exception) {
+                        startActivity(popupIntent)
+                    }
+                }
             }
 
             LaunchWindowMode.SPLIT_TOP -> {
                 val acc = EdgeAccessibilityService.instance
+                val topBounds = Rect(0, 0, screenW, screenH / 2)
+
                 if (acc != null) {
-                    launchIntent.addFlags(
-                        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
-                    )
-                    startActivity(launchIntent)
+                    // Attiva prima lo split-screen sull'app attualmente aperta in primo piano,
+                    // poi lancia la nuova app nello slot adiacente
+                    acc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
                     mainHandler.postDelayed({
-                        acc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
-                    }, 240L)
+                        val splitIntent = Intent(baseIntent).apply {
+                            addFlags(
+                                Intent.FLAG_ACTIVITY_NEW_TASK or
+                                    Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT or
+                                    Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+                            )
+                        }
+                        try {
+                            startActivity(splitIntent)
+                        } catch (_: Exception) {
+                        }
+                    }, 260L)
                 } else {
-                    launchIntent.addFlags(
-                        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT
-                    )
-                    val topBounds = Rect(0, 0, screenW, screenH / 2)
-                    val options = createWindowModeOptions(windowingMode = 3, bounds = topBounds)
-                    startActivity(launchIntent, options.toBundle())
+                    val splitIntent = Intent(baseIntent).apply {
+                        addFlags(
+                            Intent.FLAG_ACTIVITY_NEW_TASK or
+                                Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT or
+                                Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+                        )
+                    }
+                    val topOptions = createWindowModeOptions(windowingMode = 3, bounds = topBounds)
+                    try {
+                        startActivity(splitIntent, topOptions.toBundle())
+                    } catch (_: Exception) {
+                        try {
+                            startActivity(splitIntent)
+                        } catch (_: Exception) {
+                        }
+                    }
                 }
             }
 
             LaunchWindowMode.SPLIT_BOTTOM -> {
                 val acc = EdgeAccessibilityService.instance
+                val bottomBounds = Rect(0, screenH / 2, screenW, screenH)
+
                 if (acc != null) {
                     acc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
                     mainHandler.postDelayed({
-                        launchIntent.addFlags(
-                            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT
-                        )
-                        startActivity(launchIntent)
-                    }, 220L)
+                        val splitIntent = Intent(baseIntent).apply {
+                            addFlags(
+                                Intent.FLAG_ACTIVITY_NEW_TASK or
+                                    Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT or
+                                    Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+                            )
+                        }
+                        try {
+                            startActivity(splitIntent)
+                        } catch (_: Exception) {
+                        }
+                    }, 260L)
                 } else {
-                    launchIntent.addFlags(
-                        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT
-                    )
-                    val bottomBounds = Rect(0, screenH / 2, screenW, screenH)
-                    val options = createWindowModeOptions(windowingMode = 4, bounds = bottomBounds)
-                    startActivity(launchIntent, options.toBundle())
+                    val splitIntent = Intent(baseIntent).apply {
+                        addFlags(
+                            Intent.FLAG_ACTIVITY_NEW_TASK or
+                                Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT or
+                                Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+                        )
+                    }
+                    val bottomOptions = createWindowModeOptions(windowingMode = 4, bounds = bottomBounds)
+                    try {
+                        startActivity(splitIntent, bottomOptions.toBundle())
+                    } catch (_: Exception) {
+                        try {
+                            startActivity(splitIntent)
+                        } catch (_: Exception) {
+                        }
+                    }
                 }
             }
         }
