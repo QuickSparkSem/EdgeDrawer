@@ -368,23 +368,35 @@ class PrefsManager(private val context: Context) {
         set(value) = prefs.edit().putInt("vertical_position_percent", value).apply()
 
     var triggerWidthDp: Int
-        get() = prefs.getInt("trigger_width_dp", 28)
+        get() = prefs.getInt("trigger_width_dp", 26)
         set(value) = prefs.edit().putInt("trigger_width_dp", value).apply()
 
     var triggerAlphaPercent: Int
         get() = prefs.getInt("trigger_alpha_percent", 55)
         set(value) = prefs.edit().putInt("trigger_alpha_percent", value).apply()
 
+    // Due slider separati per spaziatura lettere alfabeto e spaziatura pallini colore
+    var letterSpacingExtraDp: Int
+        get() = prefs.getInt("letter_spacing_extra_dp", 2).coerceIn(0, 14)
+        set(value) = prefs.edit().putInt("letter_spacing_extra_dp", value.coerceIn(0, 14)).apply()
+
+    var colorDotSpacingExtraDp: Int
+        get() = prefs.getInt("color_dot_spacing_extra_dp", 4).coerceIn(0, 18)
+        set(value) = prefs.edit().putInt("color_dot_spacing_extra_dp", value.coerceIn(0, 18)).apply()
+
+    // Direzione lista app: true = dal basso verso l'alto (mano piccola), false = dall'alto verso il basso
+    var isAppsBottomToTop: Boolean
+        get() = prefs.getBoolean("apps_bottom_to_top", true)
+        set(value) = prefs.edit().putBoolean("apps_bottom_to_top", value).apply()
+
     var panelScalePercent: Int
         get() = prefs.getInt("panel_scale_percent", 100)
         set(value) = prefs.edit().putInt("panel_scale_percent", value).apply()
 
-    // Opacità sfondo sotto l'elenco app (default molto opaco: 88%)
     var panelBgAlphaPercent: Int
         get() = prefs.getInt("panel_bg_alpha_percent", 88).coerceIn(0, 100)
         set(value) = prefs.edit().putInt("panel_bg_alpha_percent", value.coerceIn(0, 100)).apply()
 
-    // Opacità sfondo sul lato opposto dello schermo (default molto trasparente: 10%)
     var panelBgOppositeAlphaPercent: Int
         get() = prefs.getInt("panel_bg_opposite_alpha_percent", 10).coerceIn(0, 100)
         set(value) = prefs.edit().putInt("panel_bg_opposite_alpha_percent", value.coerceIn(0, 100)).apply()
