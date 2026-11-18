@@ -42,6 +42,19 @@ enum class OneUIAccent(val colorInt: Int) {
     MONO(Color.parseColor("#8E97A8"))
 }
 
+enum class IndexVisualStyle(val title: String) {
+    RELIEF_3D("3D Rilievo"),
+    GLASS("Glass"),
+    MATERIAL("Material"),
+    MINIMAL("Minimal")
+}
+
+enum class WindowMenuTriggerMode(val title: String, val hint: String) {
+    NEVER_LIFT("Mai staccare il dito", "Trascina dal bordo su un'app e resta fermo un istante senza alzare il dito"),
+    LONG_PRESS("Tieni premuto", "A pannello aperto, tocca e tieni premuto su un'app"),
+    SWIPE_APP("Swipe dall'app", "Trascina un'app orizzontalmente verso il centro dello schermo")
+}
+
 data class AppEntry(
     val label: String,
     val shortLabel: String,
@@ -259,6 +272,8 @@ class PrefsManager(private val context: Context) {
     var isRightSide by bool("is_right_side", true)
     var themeMode by int("theme_mode", 0, 0, 2)
     var accentIndex by int("accent_index", 0, 0, OneUIAccent.entries.lastIndex)
+    var indexVisualStyleIndex by int("index_visual_style", 0, 0, IndexVisualStyle.entries.lastIndex)
+    var windowMenuTriggerIndex by int("window_menu_trigger", 0, 0, WindowMenuTriggerMode.entries.lastIndex)
 
     var disableInLandscape by bool("disable_in_landscape", true)
     var disableOnKeyboard by bool("disable_on_keyboard", true)
@@ -296,6 +311,8 @@ class PrefsManager(private val context: Context) {
     var recentCount by int("recent_count", 20, 10, 100)
 
     fun getAccentColor(): Int = OneUIAccent.entries[accentIndex].colorInt
+    fun getVisualStyle(): IndexVisualStyle = IndexVisualStyle.entries[indexVisualStyleIndex]
+    fun getWindowMenuMode(): WindowMenuTriggerMode = WindowMenuTriggerMode.entries[windowMenuTriggerIndex]
     fun isNightThemeActive(): Boolean = when (themeMode) {
         1 -> false
         2 -> true
