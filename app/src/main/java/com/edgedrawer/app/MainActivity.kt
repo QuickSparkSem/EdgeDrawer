@@ -217,37 +217,17 @@ class MainActivity : AppCompatActivity() {
             addView(rowAcc)
         }
 
-        // 3. Modalità Apertura Finestre App (Split / Pop-up / Blocca)
+        // 3. Specchietto Menu Opzioni App (Swipe sull'app)
         addCard {
-            header("Opzioni Finestra App (Split / Pop-up / Blocca)")
-            val modeBtns = ArrayList<MaterialButton>()
-            val hintText = TextView(this@MainActivity).apply {
-                text = prefs.getWindowMenuMode().hint; setTextColor(txt); alpha = 0.78f; textSize = 13f; setPadding(0, dp(6), 0, 0)
-            }
-            val rowModes = LinearLayout(this@MainActivity)
-            WindowMenuTriggerMode.entries.forEachIndexed { idx, mode ->
-                val btn = MaterialButton(this@MainActivity).apply {
-                    text = mode.title; textSize = 11.5f; isSingleLine = true; setPadding(dp(6), dp(6), dp(6), dp(6))
-                    val active = prefs.windowMenuTriggerIndex == idx
-                    backgroundTintList = ColorStateList.valueOf(if (active) accent else subBtnBg)
-                    setTextColor(if (active) Color.WHITE else txt)
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                        if (idx < WindowMenuTriggerMode.entries.lastIndex) marginEnd = dp(5)
-                    }
-                    setOnClickListener {
-                        prefs.windowMenuTriggerIndex = idx
-                        hintText.text = mode.hint
-                        modeBtns.forEachIndexed { i, b ->
-                            b.backgroundTintList = ColorStateList.valueOf(if (i == idx) accent else subBtnBg)
-                            b.setTextColor(if (i == idx) Color.WHITE else txt)
-                        }
-                    }
-                }
-                modeBtns.add(btn)
-                rowModes.addView(btn)
-            }
-            addView(rowModes)
-            addView(hintText)
+            header("Menu Opzioni App (Swipe sull'app)")
+            addView(TextView(this@MainActivity).apply {
+                text = "Fai swipe orizzontale su un'app verso il centro per aprire Split, Pop-up, Blocca schermo e Info."; setTextColor(txt); alpha = 0.78f; textSize = 13f
+            })
+            slider("Forza gesto swipe per aprire menu", " dp", 16, 90, 2, prefs.appMenuSwipeThresholdDp, { prefs.appMenuSwipeThresholdDp = it })
+            slider("Dimensione menu opzioni", "%", 70, 140, 2, prefs.appMenuScalePercent, { prefs.appMenuScalePercent = it })
+            slider("Trasparenza sfondo menu", "%", 20, 100, 2, prefs.appMenuAlphaPercent, { prefs.appMenuAlphaPercent = it })
+            slider("Distanza orizzontale dall'app", " dp", 0, 60, 2, prefs.appMenuDistanceDp, { prefs.appMenuDistanceDp = it })
+            slider("Posizione verticale menu", " dp", -120, 120, 5, prefs.appMenuVerticalOffsetDp, { prefs.appMenuVerticalOffsetDp = it })
         }
 
         // 4. Stile Visivo 3D / Glass / Material & Trigger
