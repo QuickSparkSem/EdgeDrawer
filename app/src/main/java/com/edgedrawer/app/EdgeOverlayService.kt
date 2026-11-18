@@ -24,7 +24,9 @@ class WindowLaunchProxyActivity : Activity() {
         const val EXTRA_MODE = "extra_mode"
     }
 
-    private var waitingPinReturn = false
+    private var isPinMode = false
+    private var appCoveredProxy = false
+    private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,7 +34,9 @@ class WindowLaunchProxyActivity : Activity() {
         val mode = LaunchWindowMode.entries.firstOrNull { it.name == intent.getStringExtra(EXTRA_MODE) } ?: LaunchWindowMode.NORMAL
 
         if (mode == LaunchWindowMode.APP_INFO) {
-            runCatching { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            runCatching {
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
             return finish()
         }
 
@@ -50,9 +54,9 @@ class WindowLaunchProxyActivity : Activity() {
                 finish()
             }
             LaunchWindowMode.PIN_SCREEN -> {
-                // Mantiene questo task attivo sotto l'app avviata così il blocco schermo Galaxy resta attivo fino allo sblocco con PIN/impronta
                 val ok = runCatching {
                     startLockTask()
+                    // Avvia l'app scelta nello stesso Task appena bloccato (senza NEW_TASK)
                     startActivity(baseIntent)
                     true
                 }.getOrElse {
@@ -60,18 +64,26 @@ class WindowLaunchProxyActivity : Activity() {
                     runCatching { startActivity(baseIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                     false
                 }
-                if (ok) waitingPinReturn = true else finish()
+                if (ok) {
+                    isPinMode = true
+                    // Fallback di sicurezza se l'app target impiega più tempo ad aprirsi
+                    handler.postDelayed({ if (!isFinishing) finish() }, 900L)
+                } else {
+                    finish()
+                }
             }
             LaunchWindowMode.POPUP -> {
                 val bounds = Rect((w * 0.08f).toInt(), (h * 0.16f).toInt(), (w * 0.92f).toInt(), (h * 0.84f).toInt())
-                baseIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT)
-                baseIntent.putExtra("miui.intent.extra.OPEN_IN_FREEFORM", true)
+                baseIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+                baseIntent.putExtra("android.activity.windowingMode", 5)
+                baseIntent.putExtra("com.samsung.android.multiwindow.freeform", true)
                 baseIntent.putExtra("android.activity.launchBounds", bounds)
                 val opts = ActivityOptions.makeBasic().apply {
                     setLaunchBounds(bounds)
                     runCatching { ActivityOptions::class.java.getMethod("setLaunchWindowingMode", Int::class.javaPrimitiveType).invoke(this, 5) }
                 }
-                runCatching { startActivity(baseIntent, opts.toBundle()) }.onFailure { runCatching { startActivity(baseIntent) } }
+                runCatching { startActivity(baseIntent, opts.toBundle()) }
+                    .onFailure { runCatching { startActivity(baseIntent) } }
                 finish()
             }
             LaunchWindowMode.SPLIT_TOP, LaunchWindowMode.SPLIT_BOTTOM -> {
@@ -80,7 +92,7 @@ class WindowLaunchProxyActivity : Activity() {
                 val acc = EdgeAccessibilityService.instance
                 if (acc != null) {
                     acc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
-                    Handler(Looper.getMainLooper()).postDelayed({ runCatching { startActivity(baseIntent) }; finish() }, 280L)
+                    handler.postDelayed({ runCatching { startActivity(baseIntent) }; finish() }, 280L)
                 } else {
                     val bounds = if (isTop) Rect(0, 0, w, h / 2) else Rect(0, h / 2, w, h)
                     val opts = ActivityOptions.makeBasic().apply {
@@ -95,12 +107,19 @@ class WindowLaunchProxyActivity : Activity() {
         }
     }
 
-    override fun onRestart() {
-        super.onRestart()
-        if (waitingPinReturn) {
-            runCatching { stopLockTask() }
+    override fun onStop() {
+        super.onStop()
+        // Appena l'app scelta copre completamente questa activity, chiudiamo il proxy lasciando il blocco schermo sull'app scelta
+        if (isPinMode && !appCoveredProxy) {
+            appCoveredProxy = true
+            handler.removeCallbacksAndMessages(null)
             finish()
         }
+    }
+
+    override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        super.onDestroy()
     }
 }
 
@@ -108,7 +127,6 @@ class EdgeOverlayService : Service() {
     companion object {
         const val ACTION_OPEN_DRAWER = "com.edgedrawer.app.ACTION_OPEN_DRAWER"
         const val ACTION_RELOAD_CONFIG = "com.edgedrawer.app.ACTION_RELOAD_CONFIG"
-        const val ACTION_CONTEXT_CHANGED = "com.edgedrawer.app.ACTION_CONTEXT_CHANGED"
     }
 
     private lateinit var windowManager: WindowManager
@@ -120,6 +138,16 @@ class EdgeOverlayService : Service() {
     private var drawerView: EdgeDrawerView? = null
     private var isDrawerOpen = false
     private var isImeVisible = false
+
+    // Controllo periodico di sicurezza quando il trigger è nascosto, per evitare che resti bloccato su GONE
+    private val watchdogRunnable = object : Runnable {
+        override fun run() {
+            if (prefs.isServiceEnabled && Settings.canDrawOverlays(this@EdgeOverlayService)) {
+                updateTriggerState()
+                handler.postDelayed(this, 2500L)
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -141,11 +169,15 @@ class EdgeOverlayService : Service() {
         } else {
             startForeground(101, notif)
         }
+
+        EdgeAccessibilityService.onContextUpdate = { handler.post { updateTriggerState() } }
         if (Settings.canDrawOverlays(this)) updateTriggerState()
+        handler.postDelayed(watchdogRunnable, 2500L)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        removeTrigger()
         updateTriggerState()
     }
 
@@ -160,18 +192,26 @@ class EdgeOverlayService : Service() {
     }
 
     private fun updateTriggerState() {
+        if (!Settings.canDrawOverlays(this)) return
+        val imeActive = isImeVisible || EdgeAccessibilityService.isImePresent
         val suppress = (prefs.disableInLandscape && resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) ||
-            (prefs.disableOnKeyboard && (isImeVisible || EdgeAccessibilityService.isImePresent)) ||
+            (prefs.disableOnKeyboard && imeActive) ||
             (EdgeAccessibilityService.foregroundPkg in prefs.blacklistPackages)
 
         if (suppress) {
             triggerView?.visibility = View.GONE
             return
         }
-        if (triggerView == null) setupTrigger() else {
-            triggerView?.visibility = View.VISIBLE
-            triggerView?.alpha = if (isDrawerOpen) 0f else 1f
-            triggerView?.invalidate()
+
+        val current = triggerView
+        if (current == null || !current.isAttachedToWindow) {
+            if (current != null) removeTrigger()
+            setupTrigger()
+        } else {
+            if (current.visibility != View.VISIBLE) current.visibility = View.VISIBLE
+            val targetAlpha = if (isDrawerOpen) 0f else 1f
+            if (current.alpha != targetAlpha) current.alpha = targetAlpha
+            current.invalidate()
         }
     }
 
@@ -225,7 +265,7 @@ class EdgeOverlayService : Service() {
             }
         }
         triggerView = handle
-        windowManager.addView(handle, params)
+        runCatching { windowManager.addView(handle, params) }
     }
 
     private fun removeTrigger() {
@@ -279,7 +319,10 @@ class EdgeOverlayService : Service() {
     }
 
     override fun onDestroy() {
-        closeDrawer(); removeTrigger(); repository.stopListening(); super.onDestroy()
+        EdgeAccessibilityService.onContextUpdate = null
+        handler.removeCallbacksAndMessages(null)
+        closeDrawer(); removeTrigger(); repository.stopListening()
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -290,19 +333,33 @@ class EdgeAccessibilityService : AccessibilityService() {
         @Volatile var instance: EdgeAccessibilityService? = null
         @Volatile var foregroundPkg: String? = null
         @Volatile var isImePresent: Boolean = false
+        @Volatile var onContextUpdate: (() -> Unit)? = null
     }
 
-    override fun onServiceConnected() { instance = this }
+    override fun onServiceConnected() {
+        instance = this
+        onContextUpdate?.invoke()
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        event?.packageName?.toString()?.takeIf { it != packageName }?.let { foregroundPkg = it }
-        val ime = windows?.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD } == true
+        val pkg = event?.packageName?.toString()
+        if (!pkg.isNullOrEmpty() && pkg != packageName) {
+            foregroundPkg = pkg
+        }
+        val ime = windows?.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD && it.isActive } == true
         if (ime != isImePresent || event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             isImePresent = ime
-            runCatching { startService(Intent(this, EdgeOverlayService::class.java).setAction(EdgeOverlayService.ACTION_CONTEXT_CHANGED)) }
+            onContextUpdate?.invoke()
         }
     }
+
     override fun onInterrupt() {}
-    override fun onDestroy() { instance = null; super.onDestroy() }
+
+    override fun onDestroy() {
+        instance = null
+        isImePresent = false
+        super.onDestroy()
+    }
 }
 
 class BootReceiver : BroadcastReceiver() {
