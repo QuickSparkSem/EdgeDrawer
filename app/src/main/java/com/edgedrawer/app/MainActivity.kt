@@ -224,7 +224,7 @@ class MainActivity : AppCompatActivity() {
             addView(rowAcc)
         }
 
-        // 3. Specchietto Menu Opzioni App (Swipe sull'app)
+        // 3. Menu Opzioni App (Swipe sull'app)
         addCard {
             header("Menu Opzioni App (Swipe sull'app)")
             addView(TextView(this@MainActivity).apply {
@@ -266,7 +266,7 @@ class MainActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(42))
             })
             addView(MaterialButton(this@MainActivity).apply {
-                text = "Applica colore e aggiornamenti trigger"; backgroundTintList = ColorStateList.valueOf(subBtnBg); setTextColor(txt)
+                text = "Applica colore trigger"; backgroundTintList = ColorStateList.valueOf(subBtnBg); setTextColor(txt)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
                 setOnClickListener { reloadService() }
             })
@@ -282,7 +282,7 @@ class MainActivity : AppCompatActivity() {
             slider("Opacità lettere trigger", "%", 0, 100, 1, prefs.triggerAlphaPercent, { prefs.triggerAlphaPercent = it }, { reloadService() })
         }
 
-        // 5. Disattivazione Automatica & App Nascoste
+        // 5. Regole Automatiche & App Nascoste
         addCard {
             header("Regole Automatiche & App Nascoste")
             toggle("Disabilita in modalità orizzontale (Landscape)", prefs.disableInLandscape) { _, v -> prefs.disableInLandscape = v; reloadService() }
