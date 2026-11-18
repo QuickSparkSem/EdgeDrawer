@@ -208,7 +208,7 @@ class EdgeDrawerView(
     private var isTouchingIndex = false
     private var openProgress = 0f
 
-    // Onda energetica di colore
+    // Onda energetica di colore (60 FPS)
     private var waveColor = Color.TRANSPARENT
     private var waveOriginX = 0f
     private var waveOriginY = 0f
@@ -308,12 +308,12 @@ class EdgeDrawerView(
 
         when (visualStyle) {
             IndexVisualStyle.RELIEF_3D -> {
-                indexPillPaint.setShadowLayer(dp(12f), 0f, dp(4f), Color.argb(210, 0, 0, 0))
+                indexPillPaint.setShadowLayer(dp(10f), 0f, dp(3f), Color.argb(190, 0, 0, 0))
                 indexPillPaint.color = if (isNight) Color.argb(barAlpha, 18, 22, 32) else Color.argb(barAlpha, 255, 255, 255)
                 borderPaint.strokeWidth = dp(1.2f)
                 borderPaint.color = if (isNight) Color.argb((barAlpha * 0.25f).toInt(), 255, 255, 255) else Color.argb((barAlpha * 0.22f).toInt(), 15, 20, 30)
                 rimPaint.color = if (isNight) Color.argb((barAlpha * 0.50f).toInt(), 255, 255, 255) else Color.argb(225, 255, 255, 255)
-                accentPillPaint.setShadowLayer(dp(5f), 0f, dp(2f), Color.argb(160, 0, 0, 0))
+                accentPillPaint.clearShadowLayer()
             }
             IndexVisualStyle.GLASS -> {
                 indexPillPaint.clearShadowLayer()
@@ -345,11 +345,9 @@ class EdgeDrawerView(
 
         val menuAlpha = ((prefs.appMenuAlphaPercent / 100f) * 255).toInt().coerceIn(25, 255)
         menuBgPaint.color = if (isNight) Color.argb(menuAlpha, 24, 29, 42) else Color.argb(menuAlpha, 255, 255, 255)
-        menuBgPaint.setShadowLayer(dp(10f), 0f, dp(4f), Color.argb((menuAlpha * 0.75f).toInt(), 0, 0, 0))
 
         sideBtnPaint.color = if (isNight) Color.argb(240, 24, 29, 42) else Color.argb(245, 255, 255, 255)
         labelPaint.color = if (isNight) Color.WHITE else Color.parseColor("#12151C")
-        labelPaint.setShadowLayer(dp(2f), 0f, dp(1f), if (isNight) Color.argb(220, 0, 0, 0) else Color.argb(200, 255, 255, 255))
         accentPillPaint.color = accentColor
         ringPaint.color = accentColor
     }
@@ -596,7 +594,6 @@ class EdgeDrawerView(
         isTouchingIndex = false
         val appIdx = findAppAt(x, y)
 
-        // Controllo Swipe orizzontale dall'app verso l'interno dello schermo
         if (swipeAppIdx != -1) {
             val inwardDx = if (prefs.isRightSide) (swipeStartX - x) else (x - swipeStartX)
             val threshold = dp(prefs.appMenuSwipeThresholdDp.toFloat())
@@ -741,7 +738,6 @@ class EdgeDrawerView(
                 val dy = y - lastTouchY
                 val totalDy = y - downY
 
-                // Swipe orizzontale dall'app per aprire menu opzioni
                 if (swipeAppIdx != -1 && !isScrollingList) {
                     val inwardDx = if (prefs.isRightSide) (swipeStartX - x) else (x - swipeStartX)
                     val threshold = dp(prefs.appMenuSwipeThresholdDp.toFloat())
@@ -751,7 +747,6 @@ class EdgeDrawerView(
                     }
                 }
 
-                // Scorrimento verticale della lista app
                 if (abs(totalDy) > dp(16f) && abs(totalDy) > abs(dx) * 1.25f) {
                     if (!isContinuousAZMode && selectedLetter != '★') enterContinuousAZMode(selectedLetter)
                     val maxS = computeMaxScroll()
