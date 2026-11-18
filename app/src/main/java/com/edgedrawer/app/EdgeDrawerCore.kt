@@ -49,12 +49,6 @@ enum class IndexVisualStyle(val title: String) {
     MINIMAL("Minimal")
 }
 
-enum class WindowMenuTriggerMode(val title: String, val hint: String) {
-    NEVER_LIFT("Mai staccare il dito", "Trascina dal bordo su un'app e resta fermo un istante senza alzare il dito"),
-    LONG_PRESS("Tieni premuto", "A pannello aperto, tocca e tieni premuto su un'app"),
-    SWIPE_APP("Swipe dall'app", "Trascina un'app orizzontalmente verso il centro dello schermo")
-}
-
 data class AppEntry(
     val label: String,
     val shortLabel: String,
@@ -68,7 +62,7 @@ data class AppEntry(
 
 object HapticHelper {
     enum class Pulse(val ms: Long, val amp: Int) {
-        TICK(10L, 145), HOVER(14L, 175), HOLD(26L, 240), CONFIRM(20L, 210)
+        TICK(10L, 145), HOVER(14L, 175), HOLD(24L, 235), CONFIRM(20L, 210)
     }
 
     fun trigger(context: Context, prefs: PrefsManager, pulse: Pulse) {
@@ -273,7 +267,13 @@ class PrefsManager(private val context: Context) {
     var themeMode by int("theme_mode", 0, 0, 2)
     var accentIndex by int("accent_index", 0, 0, OneUIAccent.entries.lastIndex)
     var indexVisualStyleIndex by int("index_visual_style", 0, 0, IndexVisualStyle.entries.lastIndex)
-    var windowMenuTriggerIndex by int("window_menu_trigger", 0, 0, WindowMenuTriggerMode.entries.lastIndex)
+
+    // Specchietto Menu Opzioni App (Swipe sull'app)
+    var appMenuSwipeThresholdDp by int("app_menu_swipe_threshold_dp", 36, 16, 90)
+    var appMenuScalePercent by int("app_menu_scale_percent", 100, 70, 140)
+    var appMenuAlphaPercent by int("app_menu_alpha_percent", 96, 20, 100)
+    var appMenuDistanceDp by int("app_menu_distance_dp", 12, 0, 60)
+    var appMenuVerticalOffsetDp by int("app_menu_vertical_offset_dp", 0, -120, 120)
 
     var disableInLandscape by bool("disable_in_landscape", true)
     var disableOnKeyboard by bool("disable_on_keyboard", true)
@@ -312,7 +312,6 @@ class PrefsManager(private val context: Context) {
 
     fun getAccentColor(): Int = OneUIAccent.entries[accentIndex].colorInt
     fun getVisualStyle(): IndexVisualStyle = IndexVisualStyle.entries[indexVisualStyleIndex]
-    fun getWindowMenuMode(): WindowMenuTriggerMode = WindowMenuTriggerMode.entries[windowMenuTriggerIndex]
     fun isNightThemeActive(): Boolean = when (themeMode) {
         1 -> false
         2 -> true
