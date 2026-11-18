@@ -24,6 +24,8 @@ class WindowLaunchProxyActivity : Activity() {
         const val EXTRA_MODE = "extra_mode"
     }
 
+    private var waitingPinReturn = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val pkg = intent.getStringExtra(EXTRA_PKG) ?: return finish()
@@ -48,8 +50,8 @@ class WindowLaunchProxyActivity : Activity() {
                 finish()
             }
             LaunchWindowMode.PIN_SCREEN -> {
-                // Avvia l'app nello stesso Task e blocca lo schermo fino a sblocco con password/impronta
-                val pinned = runCatching {
+                // Mantiene questo task attivo sotto l'app avviata così il blocco schermo Galaxy resta attivo fino allo sblocco con PIN/impronta
+                val ok = runCatching {
                     startLockTask()
                     startActivity(baseIntent)
                     true
@@ -58,7 +60,7 @@ class WindowLaunchProxyActivity : Activity() {
                     runCatching { startActivity(baseIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                     false
                 }
-                Handler(Looper.getMainLooper()).postDelayed({ finish() }, if (pinned) 140L else 50L)
+                if (ok) waitingPinReturn = true else finish()
             }
             LaunchWindowMode.POPUP -> {
                 val bounds = Rect((w * 0.08f).toInt(), (h * 0.16f).toInt(), (w * 0.92f).toInt(), (h * 0.84f).toInt())
@@ -90,6 +92,14 @@ class WindowLaunchProxyActivity : Activity() {
                 }
             }
             else -> finish()
+        }
+    }
+
+    override fun onRestart() {
+        super.onRestart()
+        if (waitingPinReturn) {
+            runCatching { stopLockTask() }
+            finish()
         }
     }
 }
