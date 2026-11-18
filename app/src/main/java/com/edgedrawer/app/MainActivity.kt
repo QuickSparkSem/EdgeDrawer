@@ -67,7 +67,6 @@ class SpectrumColorPickerView(
         canvas.drawRoundRect(pad, height * 0.28f, width - pad, height * 0.72f, r, r, barPaint)
         val cx = pad + (width - pad * 2f) * ratio
         thumbPaint.color = selectedColor
-        thumbPaint.setShadowLayer(4f * density, 0f, 2f * density, Color.argb(180, 0, 0, 0))
         canvas.drawCircle(cx, height / 2f, 13f * density, thumbPaint)
         canvas.drawCircle(cx, height / 2f, 13f * density, strokePaint)
     }
@@ -82,6 +81,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.attributes = window.attributes.apply { preferredRefreshRate = 60f }
         prefs = PrefsManager(this)
         repo = AppRepository(this, prefs).also { it.reloadAppsAsync() }
         renderUI()
@@ -92,7 +92,9 @@ class MainActivity : AppCompatActivity() {
         val hasOverlay = Settings.canDrawOverlays(this)
         btnPerm.text = if (hasOverlay) "1. Permesso 'Mostra sopra altre app' OK ✓" else "1. Permesso 'Mostra sopra altre app'"
         btnAcc.text = if (EdgeAccessibilityService.instance != null) "3. Schermo Diviso & Rilevamento OK ✓" else "3. Abilita Schermo Diviso & Tastiera/App"
-        if (hasOverlay && prefs.isServiceEnabled) ContextCompat.startForegroundService(this, Intent(this, EdgeOverlayService::class.java))
+        if (hasOverlay && prefs.isServiceEnabled && !EdgeOverlayService.isRunning) {
+            ContextCompat.startForegroundService(this, Intent(this, EdgeOverlayService::class.java))
+        }
     }
 
     private fun reloadService() {
@@ -147,7 +149,12 @@ class MainActivity : AppCompatActivity() {
                 thumbTintList = ColorStateList.valueOf(accent)
                 progressTintList = ColorStateList.valueOf(accent)
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                    override fun onProgressChanged(s: SeekBar?, v: Int, u: Boolean) { val r = min + v * step; label.text = "$title: $r$unit"; onSet(r) }
+                    override fun onProgressChanged(s: SeekBar?, v: Int, u: Boolean) {
+                        if (!u) return
+                        val r = min + v * step
+                        label.text = "$title: $r$unit"
+                        onSet(r)
+                    }
                     override fun onStartTrackingTouch(s: SeekBar?) {}
                     override fun onStopTrackingTouch(s: SeekBar?) = onDone()
                 })
@@ -255,8 +262,13 @@ class MainActivity : AppCompatActivity() {
             toggle("Nascondi lettere trigger (solo scorrimento invisibile)", prefs.isTriggerHidden) { _, h -> prefs.isTriggerHidden = h; reloadService() }
 
             addView(TextView(this@MainActivity).apply { text = "Colore lettere trigger (Spettro)"; setTextColor(txt); textSize = 14f; setPadding(0, dp(10), 0, 4) })
-            addView(SpectrumColorPickerView(this@MainActivity, prefs.triggerCustomColor) { prefs.triggerCustomColor = it; reloadService() }.apply {
+            addView(SpectrumColorPickerView(this@MainActivity, prefs.triggerCustomColor) { prefs.triggerCustomColor = it }.apply {
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(42))
+            })
+            addView(MaterialButton(this@MainActivity).apply {
+                text = "Applica colore e aggiornamenti trigger"; backgroundTintList = ColorStateList.valueOf(subBtnBg); setTextColor(txt)
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
+                setOnClickListener { reloadService() }
             })
 
             slider("Profondità ombra trigger (stile 3D)", "%", 0, 100, 5, prefs.triggerShadowDepthPercent, { prefs.triggerShadowDepthPercent = it }, { reloadService() })
