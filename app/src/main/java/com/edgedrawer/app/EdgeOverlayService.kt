@@ -13,6 +13,7 @@ import android.provider.Settings
 import android.view.*
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlin.math.abs
@@ -45,6 +46,19 @@ class WindowLaunchProxyActivity : Activity() {
             LaunchWindowMode.NORMAL -> {
                 runCatching { startActivity(baseIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)) }
                 finish()
+            }
+            LaunchWindowMode.PIN_SCREEN -> {
+                // Avvia l'app nello stesso Task e blocca lo schermo fino a sblocco con password/impronta
+                val pinned = runCatching {
+                    startLockTask()
+                    startActivity(baseIntent)
+                    true
+                }.getOrElse {
+                    Toast.makeText(this, "Attiva 'Aggiungi alla schermata' in Impostazioni > Sicurezza", Toast.LENGTH_LONG).show()
+                    runCatching { startActivity(baseIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    false
+                }
+                Handler(Looper.getMainLooper()).postDelayed({ finish() }, if (pinned) 140L else 50L)
             }
             LaunchWindowMode.POPUP -> {
                 val bounds = Rect((w * 0.08f).toInt(), (h * 0.16f).toInt(), (w * 0.92f).toInt(), (h * 0.84f).toInt())
