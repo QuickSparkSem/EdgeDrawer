@@ -30,6 +30,8 @@ class WindowLaunchProxyActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.attributes = window.attributes.apply { preferredRefreshRate = 60f }
+
         val pkg = intent.getStringExtra(EXTRA_PKG) ?: return finish()
         val mode = LaunchWindowMode.entries.firstOrNull { it.name == intent.getStringExtra(EXTRA_MODE) } ?: LaunchWindowMode.NORMAL
 
@@ -56,7 +58,6 @@ class WindowLaunchProxyActivity : Activity() {
             LaunchWindowMode.PIN_SCREEN -> {
                 val ok = runCatching {
                     startLockTask()
-                    // Avvia l'app scelta nello stesso Task appena bloccato (senza NEW_TASK)
                     startActivity(baseIntent)
                     true
                 }.getOrElse {
@@ -66,7 +67,6 @@ class WindowLaunchProxyActivity : Activity() {
                 }
                 if (ok) {
                     isPinMode = true
-                    // Fallback di sicurezza se l'app target impiega più tempo ad aprirsi
                     handler.postDelayed({ if (!isFinishing) finish() }, 900L)
                 } else {
                     finish()
@@ -109,7 +109,6 @@ class WindowLaunchProxyActivity : Activity() {
 
     override fun onStop() {
         super.onStop()
-        // Appena l'app scelta copre completamente questa activity, chiudiamo il proxy lasciando il blocco schermo sull'app scelta
         if (isPinMode && !appCoveredProxy) {
             appCoveredProxy = true
             handler.removeCallbacksAndMessages(null)
@@ -127,6 +126,7 @@ class EdgeOverlayService : Service() {
     companion object {
         const val ACTION_OPEN_DRAWER = "com.edgedrawer.app.ACTION_OPEN_DRAWER"
         const val ACTION_RELOAD_CONFIG = "com.edgedrawer.app.ACTION_RELOAD_CONFIG"
+        @Volatile var isRunning = false
     }
 
     private lateinit var windowManager: WindowManager
@@ -137,20 +137,25 @@ class EdgeOverlayService : Service() {
     private var triggerView: EdgeTriggerView? = null
     private var drawerView: EdgeDrawerView? = null
     private var isDrawerOpen = false
-    private var isImeVisible = false
+    private var isTriggerSuppressed = false
 
-    // Controllo periodico di sicurezza quando il trigger è nascosto, per evitare che resti bloccato su GONE
     private val watchdogRunnable = object : Runnable {
         override fun run() {
             if (prefs.isServiceEnabled && Settings.canDrawOverlays(this@EdgeOverlayService)) {
-                updateTriggerState()
-                handler.postDelayed(this, 2500L)
+                val current = triggerView
+                if (current == null || !current.isAttachedToWindow) {
+                    removeTrigger()
+                    setupTrigger()
+                }
+                updateTriggerVisibility()
+                handler.postDelayed(this, 4000L)
             }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         prefs = PrefsManager(this)
         repository = AppRepository(this, prefs).also { it.startListening() }
@@ -170,63 +175,58 @@ class EdgeOverlayService : Service() {
             startForeground(101, notif)
         }
 
-        EdgeAccessibilityService.onContextUpdate = { handler.post { updateTriggerState() } }
-        if (Settings.canDrawOverlays(this)) updateTriggerState()
-        handler.postDelayed(watchdogRunnable, 2500L)
+        EdgeAccessibilityService.onContextUpdate = { handler.post { updateTriggerVisibility() } }
+        if (Settings.canDrawOverlays(this)) {
+            setupTrigger()
+            updateTriggerVisibility()
+        }
+        handler.postDelayed(watchdogRunnable, 4000L)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        removeTrigger()
-        updateTriggerState()
+        if (!isDrawerOpen) {
+            removeTrigger()
+            setupTrigger()
+            updateTriggerVisibility()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (!Settings.canDrawOverlays(this)) { stopSelf(); return START_NOT_STICKY }
         when (intent?.action) {
             ACTION_OPEN_DRAWER -> openDrawer(false, EdgeIndexSlots.RECENT_SLOT_INDEX)
-            ACTION_RELOAD_CONFIG -> { repository.rebuildFilteredCaches(); removeTrigger(); updateTriggerState() }
-            else -> updateTriggerState()
+            ACTION_RELOAD_CONFIG -> {
+                repository.rebuildFilteredCaches()
+                removeTrigger()
+                setupTrigger()
+                updateTriggerVisibility()
+            }
+            else -> {
+                if (triggerView == null) setupTrigger()
+                updateTriggerVisibility()
+            }
         }
         return START_STICKY
     }
 
-    private fun updateTriggerState() {
-        if (!Settings.canDrawOverlays(this)) return
-        val imeActive = isImeVisible || EdgeAccessibilityService.isImePresent
+    private fun updateTriggerVisibility() {
+        if (isDrawerOpen) return
         val suppress = (prefs.disableInLandscape && resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) ||
-            (prefs.disableOnKeyboard && imeActive) ||
+            (prefs.disableOnKeyboard && EdgeAccessibilityService.isImePresent) ||
             (EdgeAccessibilityService.foregroundPkg in prefs.blacklistPackages)
 
-        if (suppress) {
-            triggerView?.visibility = View.GONE
-            return
-        }
-
-        val current = triggerView
-        if (current == null || !current.isAttachedToWindow) {
-            if (current != null) removeTrigger()
-            setupTrigger()
-        } else {
-            if (current.visibility != View.VISIBLE) current.visibility = View.VISIBLE
-            val targetAlpha = if (isDrawerOpen) 0f else 1f
-            if (current.alpha != targetAlpha) current.alpha = targetAlpha
-            current.invalidate()
+        if (suppress != isTriggerSuppressed) {
+            isTriggerSuppressed = suppress
+            triggerView?.visibility = if (suppress) View.GONE else View.VISIBLE
         }
     }
 
     private fun setupTrigger() {
+        if (!Settings.canDrawOverlays(this)) return
         val density = resources.displayMetrics.density
         val m = EdgeBarMetrics.compute(resources.displayMetrics.widthPixels.toFloat(), resources.displayMetrics.heightPixels.toFloat(), density, prefs)
         val handle = EdgeTriggerView(this, prefs)
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            handle.setOnApplyWindowInsetsListener { _, insets ->
-                isImeVisible = insets.isVisible(WindowInsets.Type.ime())
-                updateTriggerState()
-                insets
-            }
-        }
 
         val params = WindowManager.LayoutParams(
             m.indexWidthPx.toInt(), m.lettersHeightPx.toInt(),
@@ -237,34 +237,45 @@ class EdgeOverlayService : Service() {
             gravity = (if (prefs.isRightSide) Gravity.END else Gravity.START) or Gravity.TOP
             x = m.edgeMarginPx.toInt()
             y = m.lettersTopY.toInt()
+            preferredRefreshRate = 60f
         }
 
         var downX = 0f; var downY = 0f; var triggered = false; var ignored = false
         handle.setOnTouchListener { _, e ->
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; triggered = false; ignored = false; true }
+                MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX; downY = e.rawY; triggered = false; ignored = false
+                    true
+                }
                 MotionEvent.ACTION_MOVE -> {
                     if (ignored) return@setOnTouchListener false
                     if (!triggered) {
                         val dx = abs(e.rawX - downX); val dy = abs(e.rawY - downY)
-                        if (dx >= 10f * density && dx > dy * 0.85f) { ignored = true; return@setOnTouchListener false }
-                        if (dy >= 8f * density && dy > dx * 1.45f) {
+                        if (dx >= 14f * density && dx > dy * 1.1f) {
+                            ignored = true
+                            return@setOnTouchListener false
+                        }
+                        if (dy >= 7f * density) {
                             triggered = true
                             HapticHelper.trigger(this, prefs, HapticHelper.Pulse.TICK)
                             openDrawer(true, handle.getSlotAtY(e.y))
                             drawerView?.handleExternalDrag(e.rawX, e.rawY, MotionEvent.ACTION_MOVE)
                         }
-                    } else drawerView?.handleExternalDrag(e.rawX, e.rawY, MotionEvent.ACTION_MOVE)
+                    } else {
+                        drawerView?.handleExternalDrag(e.rawX, e.rawY, MotionEvent.ACTION_MOVE)
+                    }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     if (triggered) drawerView?.handleExternalDrag(e.rawX, e.rawY, e.actionMasked)
-                    triggered = false; ignored = false; true
+                    triggered = false; ignored = false
+                    true
                 }
                 else -> false
             }
         }
         triggerView = handle
+        isTriggerSuppressed = false
         runCatching { windowManager.addView(handle, params) }
     }
 
@@ -276,7 +287,7 @@ class EdgeOverlayService : Service() {
     private fun openDrawer(fromSwipe: Boolean, initialSlot: Int) {
         if (isDrawerOpen) return
         isDrawerOpen = true
-        triggerView?.alpha = 0f
+        triggerView?.visibility = View.INVISIBLE
 
         val overlay = EdgeDrawerView(
             context = this,
@@ -294,19 +305,22 @@ class EdgeOverlayService : Service() {
             },
             onToggleSide = {
                 prefs.isRightSide = !prefs.isRightSide
-                closeDrawer(); removeTrigger(); updateTriggerState()
+                closeDrawer(); removeTrigger(); setupTrigger()
                 openDrawer(false, EdgeIndexSlots.RECENT_SLOT_INDEX)
             },
             onDismiss = { closeDrawer() }
         )
 
         drawerView = overlay
-        windowManager.addView(overlay, WindowManager.LayoutParams(
+        val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
-        ))
+        ).apply {
+            preferredRefreshRate = 60f
+        }
+        windowManager.addView(overlay, params)
         overlay.prepareOpen(fromSwipe, initialSlot)
     }
 
@@ -314,11 +328,12 @@ class EdgeOverlayService : Service() {
         val current = drawerView ?: return
         drawerView = null
         isDrawerOpen = false
-        updateTriggerState()
+        triggerView?.visibility = if (isTriggerSuppressed) View.GONE else View.VISIBLE
         runCatching { windowManager.removeView(current) }
     }
 
     override fun onDestroy() {
+        isRunning = false
         EdgeAccessibilityService.onContextUpdate = null
         handler.removeCallbacksAndMessages(null)
         closeDrawer(); removeTrigger(); repository.stopListening()
@@ -343,11 +358,14 @@ class EdgeAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val pkg = event?.packageName?.toString()
-        if (!pkg.isNullOrEmpty() && pkg != packageName) {
-            foregroundPkg = pkg
+        if (!pkg.isNullOrEmpty() && pkg != packageName && pkg != "com.android.systemui") {
+            if (pkg != foregroundPkg) {
+                foregroundPkg = pkg
+                onContextUpdate?.invoke()
+            }
         }
         val ime = windows?.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD && it.isActive } == true
-        if (ime != isImePresent || event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+        if (ime != isImePresent) {
             isImePresent = ime
             onContextUpdate?.invoke()
         }
