@@ -278,7 +278,7 @@ class MainActivity : AppCompatActivity() {
             slider("Opacità sfondo lato opposto", "%", 0, 100, 1, prefs.panelBgOppositeAlphaPercent, { prefs.panelBgOppositeAlphaPercent = it })
             slider("Opacità barra alfabetica", "%", 0, 100, 1, prefs.indexBarAlphaPercent, { prefs.indexBarAlphaPercent = it })
             slider("Forza onda indice", "%", 0, 140, 1, prefs.waveStrengthPercent, { prefs.waveStrengthPercent = it })
-            slider("Feedback aptico", "%", 0, 100, 5, prefs.hapticStrengthPercent, { prefs.hapticStrengthPercent = it }, { HapticHelper.trigger(this, prefs, HapticHelper.Pulse.TICK) })
+            slider("Feedback aptico", "%", 0, 100, 5, prefs.hapticStrengthPercent, { prefs.hapticStrengthPercent = it }, { HapticHelper.trigger(this@MainActivity, prefs, HapticHelper.Pulse.TICK) })
         }
 
         root.addView(col)
