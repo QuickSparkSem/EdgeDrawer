@@ -14,7 +14,6 @@ import java.util.concurrent.Executors
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
 
-// L'ultimo elemento (ALL - Bianco) si posiziona subito sopra la lettera 'A'
 enum class AppColorFilter(val swatchColor: Int) {
     MONO(Color.parseColor("#9AA3B2")),
     PURPLE(Color.parseColor("#B36BFF")),
@@ -30,6 +29,7 @@ enum class LaunchWindowMode(val title: String) {
     SPLIT_TOP("Schermo diviso su"),
     POPUP("Pop-up"),
     SPLIT_BOTTOM("Schermo diviso giù"),
+    PIN_SCREEN("Aggiungi alla schermata"),
     APP_INFO("ⓘ Info App")
 }
 
@@ -291,6 +291,7 @@ class PrefsManager(private val context: Context) {
     var labelDistanceDp by int("label_distance_dp", 4, 0, 18)
     var appsFromIndexDp by int("apps_from_index_dp", 14, 4, 44)
     var waveStrengthPercent by int("wave_strength_percent", 75, 0, 140)
+    var colorWaveStrengthPercent by int("color_wave_strength_percent", 85, 0, 150)
     var hapticStrengthPercent by int("haptic_strength_percent", 65, 0, 100)
     var recentCount by int("recent_count", 20, 10, 100)
 
