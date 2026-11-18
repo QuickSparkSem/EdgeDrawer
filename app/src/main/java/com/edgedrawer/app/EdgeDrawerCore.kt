@@ -268,7 +268,6 @@ class PrefsManager(private val context: Context) {
     var accentIndex by int("accent_index", 0, 0, OneUIAccent.entries.lastIndex)
     var indexVisualStyleIndex by int("index_visual_style", 0, 0, IndexVisualStyle.entries.lastIndex)
 
-    // Specchietto Menu Opzioni App (Swipe sull'app)
     var appMenuSwipeThresholdDp by int("app_menu_swipe_threshold_dp", 36, 16, 90)
     var appMenuScalePercent by int("app_menu_scale_percent", 100, 70, 140)
     var appMenuAlphaPercent by int("app_menu_alpha_percent", 96, 20, 100)
