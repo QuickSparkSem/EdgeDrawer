@@ -217,9 +217,58 @@ class MainActivity : AppCompatActivity() {
             addView(rowAcc)
         }
 
-        // 3. Trigger, Spettro Colore & Ombra
+        // 3. Modalità Apertura Finestre App (Split / Pop-up / Blocca)
         addCard {
-            header("Trigger Laterale, Colore & Ombra")
+            header("Opzioni Finestra App (Split / Pop-up / Blocca)")
+            val modeBtns = ArrayList<MaterialButton>()
+            val hintText = TextView(this@MainActivity).apply {
+                text = prefs.getWindowMenuMode().hint; setTextColor(txt); alpha = 0.78f; textSize = 13f; setPadding(0, dp(6), 0, 0)
+            }
+            val rowModes = LinearLayout(this@MainActivity)
+            WindowMenuTriggerMode.entries.forEachIndexed { idx, mode ->
+                val btn = MaterialButton(this@MainActivity).apply {
+                    text = mode.title; textSize = 11.5f; isSingleLine = true; setPadding(dp(6), dp(6), dp(6), dp(6))
+                    val active = prefs.windowMenuTriggerIndex == idx
+                    backgroundTintList = ColorStateList.valueOf(if (active) accent else subBtnBg)
+                    setTextColor(if (active) Color.WHITE else txt)
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        if (idx < WindowMenuTriggerMode.entries.lastIndex) marginEnd = dp(5)
+                    }
+                    setOnClickListener {
+                        prefs.windowMenuTriggerIndex = idx
+                        hintText.text = mode.hint
+                        modeBtns.forEachIndexed { i, b ->
+                            b.backgroundTintList = ColorStateList.valueOf(if (i == idx) accent else subBtnBg)
+                            b.setTextColor(if (i == idx) Color.WHITE else txt)
+                        }
+                    }
+                }
+                modeBtns.add(btn)
+                rowModes.addView(btn)
+            }
+            addView(rowModes)
+            addView(hintText)
+        }
+
+        // 4. Stile Visivo 3D / Glass / Material & Trigger
+        addCard {
+            header("Stile Trigger, 3D / Glass / Material & Ombra")
+            addView(TextView(this@MainActivity).apply { text = "Stile visivo Trigger e Indice"; setTextColor(txt); textSize = 14f; setPadding(0, 0, 0, dp(6)) })
+            val rowStyles = LinearLayout(this@MainActivity).apply { setPadding(0, 0, 0, dp(8)) }
+            IndexVisualStyle.entries.forEachIndexed { idx, style ->
+                rowStyles.addView(MaterialButton(this@MainActivity).apply {
+                    text = style.title; textSize = 11.5f; isSingleLine = true; setPadding(dp(4), dp(6), dp(4), dp(6))
+                    val active = prefs.indexVisualStyleIndex == idx
+                    backgroundTintList = ColorStateList.valueOf(if (active) accent else subBtnBg)
+                    setTextColor(if (active) Color.WHITE else txt)
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        if (idx < IndexVisualStyle.entries.lastIndex) marginEnd = dp(5)
+                    }
+                    setOnClickListener { prefs.indexVisualStyleIndex = idx; reloadService(); renderUI() }
+                })
+            }
+            addView(rowStyles)
+
             toggle(if (prefs.isRightSide) "Lato schermo: Destra" else "Lato schermo: Sinistra", prefs.isRightSide) { sw, r ->
                 prefs.isRightSide = r; sw.text = if (r) "Lato schermo: Destra" else "Lato schermo: Sinistra"; reloadService()
             }
@@ -230,7 +279,7 @@ class MainActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(42))
             })
 
-            slider("Profondità ombra trigger", "%", 0, 100, 5, prefs.triggerShadowDepthPercent, { prefs.triggerShadowDepthPercent = it }, { reloadService() })
+            slider("Profondità ombra trigger (stile 3D)", "%", 0, 100, 5, prefs.triggerShadowDepthPercent, { prefs.triggerShadowDepthPercent = it }, { reloadService() })
             slider("Distanza trigger dal bordo display", " dp", 0, 20, 1, prefs.triggerEdgeOffsetDp, { prefs.triggerEdgeOffsetDp = it }, { reloadService() })
             slider("Dimensione indice alfabetico", "%", 65, 140, 1, prefs.indexScalePercent, { prefs.indexScalePercent = it }, { reloadService() })
             slider("Spaziatura lettere A–Z", " dp", 0, 14, 1, prefs.letterSpacingExtraDp, { prefs.letterSpacingExtraDp = it }, { reloadService() })
@@ -241,7 +290,7 @@ class MainActivity : AppCompatActivity() {
             slider("Opacità lettere trigger", "%", 0, 100, 1, prefs.triggerAlphaPercent, { prefs.triggerAlphaPercent = it }, { reloadService() })
         }
 
-        // 4. Disattivazione Automatica & App Nascoste
+        // 5. Disattivazione Automatica & App Nascoste
         addCard {
             header("Regole Automatiche & App Nascoste")
             toggle("Disabilita in modalità orizzontale (Landscape)", prefs.disableInLandscape) { _, v -> prefs.disableInLandscape = v; reloadService() }
@@ -258,7 +307,7 @@ class MainActivity : AppCompatActivity() {
             })
         }
 
-        // 5. Dimensioni App/Etichette, Scorrimento & Effetti
+        // 6. Dimensioni App/Etichette, Scorrimento & Effetti
         addCard {
             header("Dimensioni App, Scorrimento & Effetti")
             toggle(if (prefs.isAppsBottomToTop) "Ordine app: Dal basso verso l'alto" else "Ordine app: Dall'alto verso il basso", prefs.isAppsBottomToTop) { sw, v ->
