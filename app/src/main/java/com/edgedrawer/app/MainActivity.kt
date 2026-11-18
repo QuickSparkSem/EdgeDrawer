@@ -258,9 +258,9 @@ class MainActivity : AppCompatActivity() {
             })
         }
 
-        // 5. Dimensioni App/Etichette, Scorrimento & Sfondo
+        // 5. Dimensioni App/Etichette, Scorrimento & Effetti
         addCard {
-            header("Dimensioni App, Scorrimento & Sfondo")
+            header("Dimensioni App, Scorrimento & Effetti")
             toggle(if (prefs.isAppsBottomToTop) "Ordine app: Dal basso verso l'alto" else "Ordine app: Dall'alto verso il basso", prefs.isAppsBottomToTop) { sw, v ->
                 prefs.isAppsBottomToTop = v; sw.text = if (v) "Ordine app: Dal basso verso l'alto" else "Ordine app: Dall'alto verso il basso"
             }
@@ -278,6 +278,7 @@ class MainActivity : AppCompatActivity() {
             slider("Opacità sfondo lato opposto", "%", 0, 100, 1, prefs.panelBgOppositeAlphaPercent, { prefs.panelBgOppositeAlphaPercent = it })
             slider("Opacità barra alfabetica", "%", 0, 100, 1, prefs.indexBarAlphaPercent, { prefs.indexBarAlphaPercent = it })
             slider("Forza onda indice", "%", 0, 140, 1, prefs.waveStrengthPercent, { prefs.waveStrengthPercent = it })
+            slider("Forza onda colore (luce energetica)", "%", 0, 150, 5, prefs.colorWaveStrengthPercent, { prefs.colorWaveStrengthPercent = it })
             slider("Feedback aptico", "%", 0, 100, 5, prefs.hapticStrengthPercent, { prefs.hapticStrengthPercent = it }, { HapticHelper.trigger(this@MainActivity, prefs, HapticHelper.Pulse.TICK) })
         }
 
