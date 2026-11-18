@@ -240,23 +240,19 @@ class EdgeOverlayService : Service() {
             preferredRefreshRate = 60f
         }
 
-        var downX = 0f; var downY = 0f; var triggered = false; var ignored = false
+        var downY = 0f
+        var draggingDrawer = false
         handle.setOnTouchListener { _, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    downX = e.rawX; downY = e.rawY; triggered = false; ignored = false
+                    downY = e.rawY
+                    draggingDrawer = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    if (ignored) return@setOnTouchListener false
-                    if (!triggered) {
-                        val dx = abs(e.rawX - downX); val dy = abs(e.rawY - downY)
-                        if (dx >= 14f * density && dx > dy * 1.1f) {
-                            ignored = true
-                            return@setOnTouchListener false
-                        }
-                        if (dy >= 7f * density) {
-                            triggered = true
+                    if (!draggingDrawer) {
+                        if (abs(e.rawY - downY) >= 6f * density) {
+                            draggingDrawer = true
                             HapticHelper.trigger(this, prefs, HapticHelper.Pulse.TICK)
                             openDrawer(true, handle.getSlotAtY(e.y))
                             drawerView?.handleExternalDrag(e.rawX, e.rawY, MotionEvent.ACTION_MOVE)
@@ -267,8 +263,10 @@ class EdgeOverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (triggered) drawerView?.handleExternalDrag(e.rawX, e.rawY, e.actionMasked)
-                    triggered = false; ignored = false
+                    if (draggingDrawer) {
+                        drawerView?.handleExternalDrag(e.rawX, e.rawY, e.actionMasked)
+                    }
+                    draggingDrawer = false
                     true
                 }
                 else -> false
@@ -287,7 +285,11 @@ class EdgeOverlayService : Service() {
     private fun openDrawer(fromSwipe: Boolean, initialSlot: Int) {
         if (isDrawerOpen) return
         isDrawerOpen = true
-        triggerView?.visibility = View.INVISIBLE
+        // Mantiene triggerView VISIBLE così Android continua a inviare ACTION_MOVE senza interruzioni
+        triggerView?.apply {
+            hideVisuals = true
+            invalidate()
+        }
 
         val overlay = EdgeDrawerView(
             context = this,
@@ -315,7 +317,7 @@ class EdgeOverlayService : Service() {
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             preferredRefreshRate = 60f
@@ -328,7 +330,11 @@ class EdgeOverlayService : Service() {
         val current = drawerView ?: return
         drawerView = null
         isDrawerOpen = false
-        triggerView?.visibility = if (isTriggerSuppressed) View.GONE else View.VISIBLE
+        triggerView?.apply {
+            hideVisuals = false
+            visibility = if (isTriggerSuppressed) View.GONE else View.VISIBLE
+            invalidate()
+        }
         runCatching { windowManager.removeView(current) }
     }
 
@@ -357,18 +363,23 @@ class EdgeAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        val pkg = event?.packageName?.toString()
-        if (!pkg.isNullOrEmpty() && pkg != packageName && pkg != "com.android.systemui") {
-            if (pkg != foregroundPkg) {
+        val type = event?.eventType ?: return
+        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && type != AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
+
+        var changed = false
+        if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val pkg = event.packageName?.toString()
+            if (!pkg.isNullOrEmpty() && pkg != packageName && pkg != "com.android.systemui" && pkg != foregroundPkg) {
                 foregroundPkg = pkg
-                onContextUpdate?.invoke()
+                changed = true
             }
         }
         val ime = windows?.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD && it.isActive } == true
         if (ime != isImePresent) {
             isImePresent = ime
-            onContextUpdate?.invoke()
+            changed = true
         }
+        if (changed) onContextUpdate?.invoke()
     }
 
     override fun onInterrupt() {}
