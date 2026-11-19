@@ -17,6 +17,7 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlin.math.abs
+import kotlin.math.hypot
 
 class WindowLaunchProxyActivity : Activity() {
     companion object {
@@ -240,22 +241,43 @@ class EdgeOverlayService : Service() {
             preferredRefreshRate = 60f
         }
 
+        val sampleDist = 10f * density
+        val triggerVerticalDist = 14f * density
+        var downX = 0f
         var downY = 0f
         var draggingDrawer = false
+        var gestureRejected = false
+
         handle.setOnTouchListener { _, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX
                     downY = e.rawY
                     draggingDrawer = false
+                    gestureRejected = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    if (gestureRejected) return@setOnTouchListener false
+
                     if (!draggingDrawer) {
-                        if (abs(e.rawY - downY) >= 6f * density) {
-                            draggingDrawer = true
-                            HapticHelper.trigger(this, prefs, HapticHelper.Pulse.TICK)
-                            openDrawer(true, handle.getSlotAtY(e.y))
-                            drawerView?.handleExternalDrag(e.rawX, e.rawY, MotionEvent.ACTION_MOVE)
+                        val dx = abs(e.rawX - downX)
+                        val dy = abs(e.rawY - downY)
+                        val dist = hypot(dx, dy)
+
+                        // Appena il dito si muove di 10dp, verifica che la traiettoria sia dritta verticale (entro ~24° dalla verticale)
+                        if (dist >= sampleDist) {
+                            if (dy < dx * 2.2f) {
+                                // Gesto orizzontale o inclinato (es. gesture Indietro): blocca per tutto il resto del tocco
+                                gestureRejected = true
+                                return@setOnTouchListener false
+                            }
+                            if (dy >= triggerVerticalDist) {
+                                draggingDrawer = true
+                                HapticHelper.trigger(this, prefs, HapticHelper.Pulse.TICK)
+                                openDrawer(true, handle.getSlotAtY(e.y))
+                                drawerView?.handleExternalDrag(e.rawX, e.rawY, MotionEvent.ACTION_MOVE)
+                            }
                         }
                     } else {
                         drawerView?.handleExternalDrag(e.rawX, e.rawY, MotionEvent.ACTION_MOVE)
@@ -267,6 +289,7 @@ class EdgeOverlayService : Service() {
                         drawerView?.handleExternalDrag(e.rawX, e.rawY, e.actionMasked)
                     }
                     draggingDrawer = false
+                    gestureRejected = false
                     true
                 }
                 else -> false
@@ -285,7 +308,6 @@ class EdgeOverlayService : Service() {
     private fun openDrawer(fromSwipe: Boolean, initialSlot: Int) {
         if (isDrawerOpen) return
         isDrawerOpen = true
-        // Mantiene triggerView VISIBLE così Android continua a inviare ACTION_MOVE senza interruzioni
         triggerView?.apply {
             hideVisuals = true
             invalidate()
