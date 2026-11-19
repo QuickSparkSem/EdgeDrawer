@@ -80,13 +80,6 @@ class EdgeTriggerView(context: Context, private val prefs: PrefsManager) : View(
 
     var hideVisuals = false
 
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        super.onSizeChanged(w, h, oldw, oldh)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && w > 0 && h > 0) {
-            systemGestureExclusionRects = listOf(Rect(0, 0, w, h))
-        }
-    }
-
     fun getSlotAtY(localY: Float): Int {
         val usableH = (height - dp(6f)).coerceAtLeast(1f)
         val idx = ((localY.coerceIn(0f, usableH - 0.1f) / usableH) * EdgeIndexSlots.LETTERS.size).toInt()
@@ -204,14 +197,12 @@ class EdgeDrawerView(
     private var isTouchingIndex = false
     private var openProgress = 1f
 
-    // Onda energetica di colore (60 Hz)
     private var waveColor = Color.TRANSPARENT
     private var waveOriginX = 0f
     private var waveOriginY = 0f
     private var waveProgress = 0f
     private var waveAnimator: ValueAnimator? = null
 
-    // Menu opzioni finestra (Swipe dall'app)
     private var isMenuVisible = false
     private var menuAppIndex = -1
     private var hoveredMenuIndex = -1
@@ -221,7 +212,6 @@ class EdgeDrawerView(
     private var swipeStartX = 0f
     private var swipeStartY = 0f
 
-    // Scorrimento & gesti
     private var autoScrollVelY = 0f
     private var lastPointerX = 0f
     private var lastPointerY = 0f
